@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+*.obj
+*.exe
+*.pdb
+*.ilk
+
+# Config files (user-specific)
+lwsr_config.ini
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.sln.docstates
+
+# Backup files
+*.bak
+*~
