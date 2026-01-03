@@ -36,8 +36,9 @@ typedef struct {
     QualityPreset quality;
     
     // Timing
-    UINT64 frameDuration;           // In 100-ns units
+    UINT64 frameDuration;           // Ideal duration in 100-ns units (for fallback)
     UINT64 frameCount;
+    LONGLONG lastTimestamp;         // Last frame's real timestamp (for duration calc)
     LARGE_INTEGER startTime;        // Real-time start (for timestamps)
     LARGE_INTEGER perfFreq;         // Performance counter frequency
     

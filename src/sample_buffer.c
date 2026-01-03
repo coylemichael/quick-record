@@ -25,17 +25,24 @@ static void FreeSample(BufferedSample* sample) {
     sample->isKeyframe = FALSE;
 }
 
-// Evict oldest samples until we're under maxDuration
-static void EvictOldSamples(SampleBuffer* buf, LONGLONG newSampleDuration) {
-    // Keep evicting until we have room
-    while (buf->count > 0 && (buf->totalDuration + newSampleDuration > buf->maxDuration)) {
-        // Find next keyframe after tail to avoid partial GOPs
-        // For simplicity, just evict one at a time
+// Evict oldest samples until buffer duration is under maxDuration
+// Uses real timestamps: newest_timestamp - oldest_timestamp
+static void EvictOldSamples(SampleBuffer* buf, LONGLONG newTimestamp) {
+    if (buf->count == 0) return;
+    
+    // Keep evicting while (newest - oldest) > maxDuration
+    while (buf->count > 0) {
         BufferedSample* oldest = &buf->samples[buf->tail];
         
-        buf->totalDuration -= oldest->duration;
-        FreeSample(oldest);
+        // Calculate current buffer span using real timestamps
+        LONGLONG bufferSpan = newTimestamp - oldest->timestamp;
         
+        if (bufferSpan <= buf->maxDuration) {
+            break;  // Within limit, stop evicting
+        }
+        
+        // Evict oldest sample
+        FreeSample(oldest);
         buf->tail = (buf->tail + 1) % buf->capacity;
         buf->count--;
     }
@@ -43,7 +50,6 @@ static void EvictOldSamples(SampleBuffer* buf, LONGLONG newSampleDuration) {
     // Also check capacity limit
     while (buf->count >= buf->capacity) {
         BufferedSample* oldest = &buf->samples[buf->tail];
-        buf->totalDuration -= oldest->duration;
         FreeSample(oldest);
         buf->tail = (buf->tail + 1) % buf->capacity;
         buf->count--;
@@ -71,7 +77,6 @@ BOOL SampleBuffer_Init(SampleBuffer* buf, int durationSeconds, int fps,
     buf->count = 0;
     buf->head = 0;
     buf->tail = 0;
-    buf->totalDuration = 0;
     buf->maxDuration = (LONGLONG)durationSeconds * 10000000LL;  // 100-ns units
     buf->width = width;
     buf->height = height;
@@ -115,8 +120,8 @@ BOOL SampleBuffer_Add(SampleBuffer* buf, EncodedFrame* frame) {
     
     EnterCriticalSection(&buf->lock);
     
-    // Evict old samples if needed
-    EvictOldSamples(buf, frame->duration);
+    // Evict old samples based on timestamp (keeps last maxDuration seconds)
+    EvictOldSamples(buf, frame->timestamp);
     
     // Add to buffer (take ownership of data)
     BufferedSample* slot = &buf->samples[buf->head];
@@ -138,7 +143,6 @@ BOOL SampleBuffer_Add(SampleBuffer* buf, EncodedFrame* frame) {
     
     buf->head = (buf->head + 1) % buf->capacity;
     buf->count++;
-    buf->totalDuration += slot->duration;
     
     LeaveCriticalSection(&buf->lock);
     
@@ -146,10 +150,17 @@ BOOL SampleBuffer_Add(SampleBuffer* buf, EncodedFrame* frame) {
 }
 
 double SampleBuffer_GetDuration(SampleBuffer* buf) {
-    if (!buf || !buf->initialized) return 0.0;
+    if (!buf || !buf->initialized || buf->count == 0) return 0.0;
     
     EnterCriticalSection(&buf->lock);
-    double duration = (double)buf->totalDuration / 10000000.0;
+    
+    // Calculate duration from timestamps: newest - oldest
+    int newestIdx = (buf->head - 1 + buf->capacity) % buf->capacity;
+    BufferedSample* newest = &buf->samples[newestIdx];
+    BufferedSample* oldest = &buf->samples[buf->tail];
+    
+    double duration = (double)(newest->timestamp - oldest->timestamp) / 10000000.0;
+    
     LeaveCriticalSection(&buf->lock);
     
     return duration;
@@ -194,7 +205,6 @@ void SampleBuffer_Clear(SampleBuffer* buf) {
     buf->head = 0;
     buf->tail = 0;
     buf->count = 0;
-    buf->totalDuration = 0;
     
     LeaveCriticalSection(&buf->lock);
 }
@@ -212,8 +222,13 @@ BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
         return FALSE;
     }
     
-    BufLog("WriteToFile: %d samples, %.1fs to %s\n", 
-           buf->count, (double)buf->totalDuration / 10000000.0, outputPath);
+    // Calculate duration from timestamps
+    double bufDuration = 0.0;
+    if (buf->count > 0) {
+        int newestIdx = (buf->head - 1 + buf->capacity) % buf->capacity;
+        bufDuration = (double)(buf->samples[newestIdx].timestamp - buf->samples[buf->tail].timestamp) / 10000000.0;
+    }
+    BufLog("WriteToFile: %d samples, %.1fs to %s\n", buf->count, bufDuration, outputPath);
     
     // Allocate MuxerSample array to snapshot buffer contents
     MuxerSample* samples = (MuxerSample*)malloc(buf->count * sizeof(MuxerSample));
@@ -226,11 +241,25 @@ BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
     // Snapshot buffer contents (copy pointers, muxer will only read)
     int sampleCount = 0;
     int idx = buf->tail;
+    LONGLONG firstTimestamp = 0;  // Will normalize timestamps to start at 0
+    
+    // First pass: find the first timestamp
+    for (int i = 0; i < buf->count; i++) {
+        BufferedSample* src = &buf->samples[(buf->tail + i) % buf->capacity];
+        if (src->data && src->size > 0) {
+            firstTimestamp = src->timestamp;
+            break;
+        }
+    }
+    
+    // Second pass: copy samples with normalized timestamps
     for (int i = 0; i < buf->count; i++) {
         BufferedSample* src = &buf->samples[idx];
         if (src->data && src->size > 0) {
             samples[sampleCount].data = src->data;
             samples[sampleCount].size = src->size;
+            samples[sampleCount].timestamp = src->timestamp - firstTimestamp;  // Normalize to start at 0
+            samples[sampleCount].duration = src->duration;
             samples[sampleCount].isKeyframe = src->isKeyframe;
             sampleCount++;
         }

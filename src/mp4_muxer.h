@@ -14,6 +14,8 @@
 typedef struct {
     BYTE* data;             // H.264 NAL unit data
     DWORD size;             // Size in bytes
+    LONGLONG timestamp;     // Sample time (100-ns units)
+    LONGLONG duration;      // Sample duration (100-ns units)
     BOOL isKeyframe;        // TRUE if IDR frame
 } MuxerSample;
 

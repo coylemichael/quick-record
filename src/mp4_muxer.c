@@ -135,7 +135,7 @@ BOOL MP4Muxer_WriteFile(
         mfBuffer->lpVtbl->Unlock(mfBuffer);
         mfBuffer->lpVtbl->SetCurrentLength(mfBuffer, sample->size);
         
-        // Create MF sample with precise timestamp
+        // Create MF sample with REAL wall-clock timestamp from capture
         IMFSample* mfSample = NULL;
         hr = MFCreateSample(&mfSample);
         if (FAILED(hr)) {
@@ -143,9 +143,9 @@ BOOL MP4Muxer_WriteFile(
             continue;
         }
         
-        // Precise timestamp using utility function
-        LONGLONG sampleTime = Util_CalculateTimestamp(samplesWritten, config->fps);
-        LONGLONG sampleDuration = Util_CalculateFrameDuration(samplesWritten, config->fps);
+        // Use the actual timestamp from capture (already normalized to start at 0)
+        LONGLONG sampleTime = sample->timestamp;
+        LONGLONG sampleDuration = sample->duration;
         
         mfSample->lpVtbl->AddBuffer(mfSample, mfBuffer);
         mfSample->lpVtbl->SetSampleTime(mfSample, sampleTime);
@@ -167,9 +167,9 @@ BOOL MP4Muxer_WriteFile(
         }
     }
     
-    // Log final stats
-    LONGLONG finalDuration = Util_CalculateTimestamp(samplesWritten, config->fps);
-    MuxLog("MP4Muxer: Wrote %d/%d samples (%.3fs), keyframes: %d\n", 
+    // Log final stats - use last sample's actual timestamp for accurate duration
+    LONGLONG finalDuration = (sampleCount > 0) ? samples[sampleCount-1].timestamp + samples[sampleCount-1].duration : 0;
+    MuxLog("MP4Muxer: Wrote %d/%d samples (%.3fs real-time), keyframes: %d\n", 
            samplesWritten, sampleCount, (double)finalDuration / 10000000.0, keyframeCount);
     
     // Finalize

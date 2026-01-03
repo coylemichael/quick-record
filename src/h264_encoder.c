@@ -144,12 +144,39 @@ static IMFSample* CreateInputSample(H264MemoryEncoder* enc, const BYTE* bgraData
         return NULL;
     }
     
-    // Use frame-count based timing for consistent playback
-    // This ensures smooth video at target FPS regardless of capture irregularities
-    LONGLONG sampleTime = (LONGLONG)(enc->frameCount * enc->frameDuration);
+    // Use REAL wall-clock timestamp if provided (non-zero)
+    // This ensures video plays back at the same speed as real-time capture
+    LONGLONG sampleTime;
+    LONGLONG sampleDuration;
+    
+    if (timestamp > 0) {
+        // Use the real wall-clock timestamp from capture
+        sampleTime = (LONGLONG)timestamp;
+        
+        // Calculate real duration as gap since last frame
+        // First frame gets ideal duration, subsequent frames get real gap
+        if (enc->lastTimestamp > 0) {
+            sampleDuration = sampleTime - enc->lastTimestamp;
+            // Clamp duration to reasonable range (avoid issues from timing glitches)
+            LONGLONG minDuration = (LONGLONG)enc->frameDuration / 4;  // 25% of ideal
+            LONGLONG maxDuration = (LONGLONG)enc->frameDuration * 4;  // 400% of ideal
+            if (sampleDuration < minDuration) sampleDuration = minDuration;
+            if (sampleDuration > maxDuration) sampleDuration = maxDuration;
+        } else {
+            sampleDuration = (LONGLONG)enc->frameDuration;  // First frame: use ideal
+        }
+        enc->lastTimestamp = sampleTime;
+    } else {
+        // Fallback to frame-count based timing (for backwards compatibility)
+        sampleTime = (LONGLONG)(enc->frameCount * enc->frameDuration);
+        sampleDuration = (LONGLONG)enc->frameDuration;
+    }
     
     sample->lpVtbl->SetSampleTime(sample, sampleTime);
-    sample->lpVtbl->SetSampleDuration(sample, (LONGLONG)enc->frameDuration);
+    sample->lpVtbl->SetSampleDuration(sample, sampleDuration);
+    
+    // Request keyframe on every frame (forces all I-frames)
+    sample->lpVtbl->SetUINT32(sample, &MFSampleExtension_CleanPoint, TRUE);
     
     return sample;
 }
@@ -365,17 +392,36 @@ BOOL H264Encoder_Init(H264MemoryEncoder* enc, int width, int height, int fps, Qu
     }
     H264Log("Input type set successfully\n");
     
-    // Try to set low latency mode via codec API
+    // Configure encoder via codec API
     ICodecAPI* codecAPI = NULL;
     hr = enc->encoder->lpVtbl->QueryInterface(enc->encoder, &IID_ICodecAPI, (void**)&codecAPI);
     if (SUCCEEDED(hr) && codecAPI) {
         VARIANT var;
         VariantInit(&var);
+        
+        // Enable low latency mode
         var.vt = VT_BOOL;
         var.boolVal = VARIANT_TRUE;
         codecAPI->lpVtbl->SetValue(codecAPI, &CODECAPI_AVLowLatencyMode, &var);
-        codecAPI->lpVtbl->Release(codecAPI);
         H264Log("Low latency mode enabled\n");
+        
+        // Disable B-frames
+        var.vt = VT_UI4;
+        var.ulVal = 0;
+        codecAPI->lpVtbl->SetValue(codecAPI, &CODECAPI_AVEncMPVDefaultBPictureCount, &var);
+        H264Log("B-frames disabled\n");
+        
+        // Set GOP size to 1 = ALL I-frames (intra-only)
+        var.vt = VT_UI4;
+        var.ulVal = 1;
+        hr = codecAPI->lpVtbl->SetValue(codecAPI, &CODECAPI_AVEncMPVGOPSize, &var);
+        if (SUCCEEDED(hr)) {
+            H264Log("GOP size = 1 (all I-frames)\n");
+        } else {
+            H264Log("GOP size setting failed: 0x%08X\n", hr);
+        }
+        
+        codecAPI->lpVtbl->Release(codecAPI);
     }
     
     // Start processing

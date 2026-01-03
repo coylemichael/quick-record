@@ -27,8 +27,7 @@ typedef struct {
     int head;                   // Next write position
     int tail;                   // Oldest sample position
     
-    LONGLONG totalDuration;     // Total buffered duration (100-ns)
-    LONGLONG maxDuration;       // Target max duration (100-ns)
+    LONGLONG maxDuration;       // Target max duration (100-ns units)
     
     int width;                  // Video width
     int height;                 // Video height

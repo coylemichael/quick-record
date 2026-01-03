@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.1.1] - 2026-01-03
+
+### Fixed
+- **Video playback speed accuracy** - Videos now play at correct real-time speed
+  - Issue: Video content played faster than real-time (e.g., 10 seconds of content in 6 seconds)
+  - Root cause: Frame timestamps were based on frame count rather than actual wall-clock time
+  - Solution: Each frame now gets a real wall-clock timestamp from capture time
+  - Inspired by ReplaySorcery's timestamp approach using `av_gettime_relative()`
+
+- **Buffer duration accuracy** - Replay buffer now contains exactly the configured duration
+  - Issue: 15-second buffer was producing 26-second videos
+  - Root cause: Eviction used ideal frame durations (16.67ms at 60fps) but actual capture rate was ~34fps
+  - Solution: Eviction now uses timestamp difference: `newest_timestamp - oldest_timestamp > max_duration`
+
+- **Frame duration calculation** - Each frame's duration is now the real gap since the previous frame
+  - Prevents timing drift in playback
+  - Clamped to 25%-400% of ideal duration to handle timing glitches
+
+### Technical Details
+- Timestamp chain: Capture → Encoder → Buffer → Muxer all use real wall-clock timestamps
+- Timestamps normalized to start at 0 when saving (first frame's timestamp becomes 0)
+- Added diagnostic logging showing actual vs target FPS during capture
+
+---
+
+## [1.1.0] - 2026-01-03
+
+### Changed
+- **Phase 1-3 Architecture Refactoring** - Modular, maintainable codebase
+  - Separated concerns into dedicated modules
+  - Improved code organization and single responsibility
+
+---
+
 ## [1.0.0] - 2026-01-03
 
 ### Added

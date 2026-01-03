@@ -2739,18 +2739,15 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 case ID_CMB_REPLAY_HOURS:
                 case ID_CMB_REPLAY_MINS:
                 case ID_CMB_REPLAY_SECS:
+                    // Duration is read on settings close, but update RAM estimate live
                     if (HIWORD(wParam) == CBN_SELCHANGE) {
-                        // Update duration from dropdowns
                         int h = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_REPLAY_HOURS), CB_GETCURSEL, 0, 0);
                         int m = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_REPLAY_MINS), CB_GETCURSEL, 0, 0);
                         int s = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_REPLAY_SECS), CB_GETCURSEL, 0, 0);
-                        
                         int total = h * 3600 + m * 60 + s;
-                        if (total < 1) total = 1;  // Minimum 1 second
-                        if (total > 86400) total = 86400;  // Maximum 24 hours
+                        if (total < 1) total = 1;
+                        // Update config immediately so RAM estimate is accurate
                         g_config.replayDuration = total;
-                        
-                        // Update RAM estimate
                         UpdateReplayRAMEstimate(hwnd);
                     }
                     break;
@@ -2845,10 +2842,17 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             int hours = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_HOURS), CB_GETCURSEL, 0, 0);
             int mins = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_MINUTES), CB_GETCURSEL, 0, 0);
             int secs = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_SECONDS), CB_GETCURSEL, 0, 0);
-            
             int total = hours * 3600 + mins * 60 + secs;
-            if (total < 1) total = 1; // Minimum 1 second
+            if (total < 1) total = 1;
             g_config.maxRecordingSeconds = total;
+            
+            // Save replay duration from dropdowns (simple: 3 boxes -> 1 number)
+            int rh = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_REPLAY_HOURS), CB_GETCURSEL, 0, 0);
+            int rm = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_REPLAY_MINS), CB_GETCURSEL, 0, 0);
+            int rs = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_REPLAY_SECS), CB_GETCURSEL, 0, 0);
+            int replayTotal = rh * 3600 + rm * 60 + rs;
+            if (replayTotal < 1) replayTotal = 1;
+            g_config.replayDuration = replayTotal;
             
             // Save path
             GetWindowTextA(GetDlgItem(hwnd, ID_EDT_PATH), g_config.savePath, MAX_PATH);

@@ -213,11 +213,14 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
     }
     ReplayLog("Sample buffer initialized (max %ds)\n", g_config.replayDuration);
     
-    // Timing
-    DWORD frameIntervalMs = 1000 / fps;
-    LARGE_INTEGER perfFreq, lastFrameTime;
+    // Timing - use floating point for precise frame intervals
+    double frameIntervalMs = 1000.0 / (double)fps;  // 16.667ms for 60fps
+    ReplayLog("Frame interval: %.4f ms (target fps=%d)\n", frameIntervalMs, fps);
+    
+    LARGE_INTEGER perfFreq, lastFrameTime, captureStartTime;
     QueryPerformanceFrequency(&perfFreq);
     QueryPerformanceCounter(&lastFrameTime);
+    captureStartTime = lastFrameTime;
     
     int frameCount = 0;
     int lastLogFrame = 0;
@@ -228,8 +231,16 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
             double duration = SampleBuffer_GetDuration(&g_sampleBuffer);
             int count = SampleBuffer_GetCount(&g_sampleBuffer);
             
-            ReplayLog("SAVE REQUEST: %d samples (%.1fs) -> %s\n", 
-                      count, duration, state->savePath);
+            // Calculate actual capture stats for diagnostics
+            LARGE_INTEGER nowTime;
+            QueryPerformanceCounter(&nowTime);
+            double realElapsedSec = (double)(nowTime.QuadPart - captureStartTime.QuadPart) / perfFreq.QuadPart;
+            double actualFPS = frameCount / realElapsedSec;
+            
+            ReplayLog("SAVE REQUEST: %d samples (video=%.2fs) after %.2fs real time\n", 
+                      count, duration, realElapsedSec);
+            ReplayLog("  Actual capture rate: %.2f fps (target: %d fps)\n", actualFPS, fps);
+            ReplayLog("  Output path: %s\n", state->savePath);
             
             // Write buffer to file
             BOOL ok = SampleBuffer_WriteToFile(&g_sampleBuffer, state->savePath);
@@ -248,26 +259,34 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
         if (frameElapsedMs >= frameIntervalMs) {
             lastFrameTime = currentTime;
             
-            UINT64 timestamp = 0;
-            BYTE* frameData = Capture_GetFrame(capture, &timestamp);
+            // Calculate real wall-clock timestamp for this frame (100-ns units)
+            double realElapsedSec = (double)(currentTime.QuadPart - captureStartTime.QuadPart) / perfFreq.QuadPart;
+            UINT64 realTimestamp = (UINT64)(realElapsedSec * 10000000.0);  // Convert to 100-ns units
+            
+            BYTE* frameData = Capture_GetFrame(capture, NULL);
             
             if (frameData) {
-                // Encode to H.264 with timestamp=0 to use internal real-time tracking
+                // Encode with REAL wall-clock timestamp for accurate playback
                 EncodedFrame encoded = {0};
-                if (H264Encoder_EncodeFrame(&g_encoder, frameData, 0, &encoded)) {
+                if (H264Encoder_EncodeFrame(&g_encoder, frameData, realTimestamp, &encoded)) {
                     // Add to buffer (buffer takes ownership)
                     SampleBuffer_Add(&g_sampleBuffer, &encoded);
                 }
                 
                 frameCount++;
                 
-                // Periodic log
+                // Periodic log - now with actual FPS calculation
                 if (frameCount - lastLogFrame >= fps * 5) {  // Every 5 seconds
+                    LARGE_INTEGER nowTime;
+                    QueryPerformanceCounter(&nowTime);
+                    double realElapsedSec = (double)(nowTime.QuadPart - captureStartTime.QuadPart) / perfFreq.QuadPart;
+                    double actualFPS = frameCount / realElapsedSec;
+                    
                     double duration = SampleBuffer_GetDuration(&g_sampleBuffer);
                     size_t memMB = SampleBuffer_GetMemoryUsage(&g_sampleBuffer) / (1024 * 1024);
                     int count = SampleBuffer_GetCount(&g_sampleBuffer);
-                    ReplayLog("Status: %d frames, %.1fs buffered, %zu MB RAM\n", 
-                              count, duration, memMB);
+                    ReplayLog("Status: %d frames in %.1fs (actual=%.1f fps, target=%d fps), buffer=%.1fs, %zu MB\n", 
+                              frameCount, realElapsedSec, actualFPS, fps, duration, memMB);
                     lastLogFrame = frameCount;
                 }
             }
