@@ -28,7 +28,7 @@ cl.exe /nologo /O2 /GL /GS- /MD ^
     /W3 ^
     /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "_CRT_SECURE_NO_WARNINGS" ^
     /Fe"bin\lwsr.exe" ^
-    src\main.c src\config.c src\capture.c src\encoder.c src\overlay.c src\action_toolbar.c src\border.c src\replay_buffer.c src\h264_encoder.c src\sample_buffer.c src\util.c src\logger.c src\color_convert.c ^
+    src\main.c src\config.c src\capture.c src\encoder.c src\overlay.c src\action_toolbar.c src\border.c src\replay_buffer.c src\h264_encoder.c src\sample_buffer.c src\mp4_muxer.c src\util.c src\logger.c src\color_convert.c ^
     /link /SUBSYSTEM:WINDOWS /LTCG /OPT:REF /OPT:ICF ^
     user32.lib gdi32.lib d3d11.lib dxgi.lib mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib shell32.lib comdlg32.lib comctl32.lib dwmapi.lib winmm.lib propsys.lib oleaut32.lib strmiids.lib
 

@@ -1,15 +1,13 @@
 /*
  * Sample Buffer Implementation
- * Thread-safe circular buffer with MP4 passthrough muxing
+ * Thread-safe circular buffer for H.264 encoded frames
+ * Muxing responsibility delegated to mp4_muxer module
  */
 
 #include "sample_buffer.h"
+#include "mp4_muxer.h"
 #include "util.h"
 #include "logger.h"
-#include <mfapi.h>
-#include <mfidl.h>
-#include <mfreadwrite.h>
-#include <mferror.h>
 #include <stdio.h>
 
 // Alias for logging
@@ -201,9 +199,8 @@ void SampleBuffer_Clear(SampleBuffer* buf) {
     LeaveCriticalSection(&buf->lock);
 }
 
-// Write buffered samples to MP4 file using SinkWriter
-// This re-encodes because passthrough muxing with raw H.264 NALs is complex
-// For true passthrough, we'd need to write the MP4 manually
+// Write buffered samples to MP4 file using muxer module
+// Snapshots buffer contents, then delegates muxing to mp4_muxer
 BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
     if (!buf || !buf->initialized || !outputPath) return FALSE;
     
@@ -218,169 +215,41 @@ BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
     BufLog("WriteToFile: %d samples, %.1fs to %s\n", 
            buf->count, (double)buf->totalDuration / 10000000.0, outputPath);
     
-    // Convert path to wide string
-    WCHAR wPath[MAX_PATH];
-    MultiByteToWideChar(CP_ACP, 0, outputPath, -1, wPath, MAX_PATH);
-    
-    // Create SinkWriter
-    IMFSinkWriter* writer = NULL;
-    IMFAttributes* attrs = NULL;
-    
-    HRESULT hr = MFCreateAttributes(&attrs, 2);
-    if (SUCCEEDED(hr)) {
-        attrs->lpVtbl->SetUINT32(attrs, &MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
-        attrs->lpVtbl->SetUINT32(attrs, &MF_LOW_LATENCY, TRUE);
-    }
-    
-    hr = MFCreateSinkWriterFromURL(wPath, NULL, attrs, &writer);
-    if (attrs) attrs->lpVtbl->Release(attrs);
-    
-    if (FAILED(hr)) {
-        BufLog("WriteToFile: MFCreateSinkWriterFromURL failed 0x%08X\n", hr);
+    // Allocate MuxerSample array to snapshot buffer contents
+    MuxerSample* samples = (MuxerSample*)malloc(buf->count * sizeof(MuxerSample));
+    if (!samples) {
         LeaveCriticalSection(&buf->lock);
+        BufLog("WriteToFile: failed to allocate sample array\n");
         return FALSE;
     }
     
-    // Configure output type (H.264)
-    IMFMediaType* outputType = NULL;
-    hr = MFCreateMediaType(&outputType);
-    if (FAILED(hr)) {
-        writer->lpVtbl->Release(writer);
-        LeaveCriticalSection(&buf->lock);
-        return FALSE;
-    }
-    
-    // Calculate bitrate using shared utility
-    UINT32 bitrate = Util_CalculateBitrate(buf->width, buf->height, buf->fps, buf->quality);
-    
-    outputType->lpVtbl->SetGUID(outputType, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
-    outputType->lpVtbl->SetGUID(outputType, &MF_MT_SUBTYPE, &MFVideoFormat_H264);
-    outputType->lpVtbl->SetUINT32(outputType, &MF_MT_AVG_BITRATE, bitrate);
-    outputType->lpVtbl->SetUINT32(outputType, &MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    outputType->lpVtbl->SetUINT32(outputType, &MF_MT_MPEG2_PROFILE, 100);
-    
-    UINT64 frameSize = ((UINT64)buf->width << 32) | buf->height;
-    outputType->lpVtbl->SetUINT64(outputType, &MF_MT_FRAME_SIZE, frameSize);
-    
-    // Use exact frame rate fraction for proper timing
-    UINT64 frameRate = ((UINT64)buf->fps << 32) | 1;
-    outputType->lpVtbl->SetUINT64(outputType, &MF_MT_FRAME_RATE, frameRate);
-    
-    // Set pixel aspect ratio (square pixels)
-    UINT64 pixelAspect = ((UINT64)1 << 32) | 1;
-    outputType->lpVtbl->SetUINT64(outputType, &MF_MT_PIXEL_ASPECT_RATIO, pixelAspect);
-    
-    BufLog("WriteToFile: Output type: %dx%d @ %d fps, bitrate=%u\n", 
-           buf->width, buf->height, buf->fps, bitrate);
-    
-    DWORD streamIndex = 0;
-    hr = writer->lpVtbl->AddStream(writer, outputType, &streamIndex);
-    
-    if (FAILED(hr)) {
-        BufLog("WriteToFile: AddStream failed 0x%08X\n", hr);
-        outputType->lpVtbl->Release(outputType);
-        writer->lpVtbl->Release(writer);
-        LeaveCriticalSection(&buf->lock);
-        return FALSE;
-    }
-    
-    // For H.264 passthrough, use the SAME type for input as output
-    // The SinkWriter will just mux without transcoding
-    hr = writer->lpVtbl->SetInputMediaType(writer, streamIndex, outputType, NULL);
-    outputType->lpVtbl->Release(outputType);
-    
-    if (FAILED(hr)) {
-        BufLog("WriteToFile: SetInputMediaType failed 0x%08X\n", hr);
-        writer->lpVtbl->Release(writer);
-        LeaveCriticalSection(&buf->lock);
-        return FALSE;
-    }
-    
-    BufLog("WriteToFile: Stream configured for H.264 passthrough\n");
-    
-    // Begin writing
-    hr = writer->lpVtbl->BeginWriting(writer);
-    if (FAILED(hr)) {
-        BufLog("WriteToFile: BeginWriting failed 0x%08X\n", hr);
-        writer->lpVtbl->Release(writer);
-        LeaveCriticalSection(&buf->lock);
-        return FALSE;
-    }
-    
-    // Write all samples with sequential timestamps
-    // Use precise calculation to avoid rounding errors: time = (frame * 10000000) / fps
-    // This ensures exact timing without cumulative drift
-    int samplesWritten = 0;
+    // Snapshot buffer contents (copy pointers, muxer will only read)
+    int sampleCount = 0;
     int idx = buf->tail;
-    int frameNumber = 0;
-    
-    BufLog("WriteToFile: Writing %d samples at %d fps\n", buf->count, buf->fps);
-    
-    int keyframeCount = 0;
     for (int i = 0; i < buf->count; i++) {
-        BufferedSample* sample = &buf->samples[idx];
-        
-        if (sample->data && sample->size > 0) {
-            // Create MF buffer
-            IMFMediaBuffer* mfBuffer = NULL;
-            hr = MFCreateMemoryBuffer(sample->size, &mfBuffer);
-            
-            if (SUCCEEDED(hr)) {
-                BYTE* bufData = NULL;
-                hr = mfBuffer->lpVtbl->Lock(mfBuffer, &bufData, NULL, NULL);
-                if (SUCCEEDED(hr)) {
-                    memcpy(bufData, sample->data, sample->size);
-                    mfBuffer->lpVtbl->Unlock(mfBuffer);
-                    mfBuffer->lpVtbl->SetCurrentLength(mfBuffer, sample->size);
-                    
-                    // Create MF sample with precise timestamps (no rounding accumulation)
-                    IMFSample* mfSample = NULL;
-                    hr = MFCreateSample(&mfSample);
-                    if (SUCCEEDED(hr)) {
-                        // Precise timestamp using utility function
-                        LONGLONG sampleTime = Util_CalculateTimestamp(frameNumber, buf->fps);
-                        LONGLONG sampleDuration = Util_CalculateFrameDuration(frameNumber, buf->fps);
-                        
-                        mfSample->lpVtbl->AddBuffer(mfSample, mfBuffer);
-                        mfSample->lpVtbl->SetSampleTime(mfSample, sampleTime);
-                        mfSample->lpVtbl->SetSampleDuration(mfSample, sampleDuration);
-                        
-                        if (sample->isKeyframe) {
-                            mfSample->lpVtbl->SetUINT32(mfSample, &MFSampleExtension_CleanPoint, TRUE);
-                            keyframeCount++;
-                        }
-                        
-                        hr = writer->lpVtbl->WriteSample(writer, streamIndex, mfSample);
-                        if (SUCCEEDED(hr)) {
-                            samplesWritten++;
-                            frameNumber++;
-                        } else {
-                            BufLog("WriteSample failed at %d: 0x%08X\n", i, hr);
-                        }
-                        
-                        mfSample->lpVtbl->Release(mfSample);
-                    }
-                }
-                mfBuffer->lpVtbl->Release(mfBuffer);
-            }
+        BufferedSample* src = &buf->samples[idx];
+        if (src->data && src->size > 0) {
+            samples[sampleCount].data = src->data;
+            samples[sampleCount].size = src->size;
+            samples[sampleCount].isKeyframe = src->isKeyframe;
+            sampleCount++;
         }
-        
         idx = (idx + 1) % buf->capacity;
     }
     
-    // Final duration is exactly (frameCount * 10000000) / fps
-    LONGLONG finalDuration = (LONGLONG)frameNumber * 10000000LL / buf->fps;
-    BufLog("WriteToFile: Final timestamp: %lld (%.3fs), keyframes: %d\n", 
-           finalDuration, (double)finalDuration / 10000000.0, keyframeCount);
-    
-    // Finalize
-    hr = writer->lpVtbl->Finalize(writer);
-    writer->lpVtbl->Release(writer);
+    // Build muxer config from buffer properties
+    MuxerConfig config;
+    config.width = buf->width;
+    config.height = buf->height;
+    config.fps = buf->fps;
+    config.quality = buf->quality;
     
     LeaveCriticalSection(&buf->lock);
     
-    BufLog("WriteToFile: wrote %d/%d samples, finalize=%s\n", 
-           samplesWritten, buf->count, SUCCEEDED(hr) ? "OK" : "FAILED");
+    // Delegate muxing to dedicated module
+    BOOL success = MP4Muxer_WriteFile(outputPath, samples, sampleCount, &config);
     
-    return SUCCEEDED(hr) && samplesWritten > 0;
+    free(samples);
+    
+    return success;
 }
