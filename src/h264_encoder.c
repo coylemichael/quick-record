@@ -433,16 +433,6 @@ BOOL H264Encoder_EncodeFrame(H264MemoryEncoder* enc, const BYTE* bgraData, LONGL
     return ProcessEncoderOutput(enc, outFrame);
 }
 
-const BYTE* H264Encoder_GetCodecPrivateData(H264MemoryEncoder* enc, DWORD* outSize) {
-    if (!enc || !enc->initialized) {
-        if (outSize) *outSize = 0;
-        return NULL;
-    }
-    
-    if (outSize) *outSize = enc->codecPrivateSize;
-    return enc->codecPrivateData;
-}
-
 BOOL H264Encoder_Flush(H264MemoryEncoder* enc, EncodedFrame* outFrame) {
     if (!enc->initialized) return FALSE;
     
@@ -473,11 +463,6 @@ void H264Encoder_Shutdown(H264MemoryEncoder* enc) {
     if (enc->outputType) {
         enc->outputType->lpVtbl->Release(enc->outputType);
         enc->outputType = NULL;
-    }
-    
-    if (enc->codecPrivateData) {
-        free(enc->codecPrivateData);
-        enc->codecPrivateData = NULL;
     }
     
     enc->initialized = FALSE;

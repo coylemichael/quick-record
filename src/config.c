@@ -32,7 +32,6 @@ void Config_Load(AppConfig* config) {
     
     // Replay buffer defaults
     config->replayEnabled = FALSE;
-    config->replayStorageType = REPLAY_STORAGE_DISK;  // Always use encoded mode (like ShadowPlay)
     config->replayDuration = 60;  // 1 minute default
     config->replayCaptureSource = MODE_MONITOR;
     config->replayMonitorIndex = 0;  // Primary monitor
@@ -74,8 +73,6 @@ void Config_Load(AppConfig* config) {
         // Replay buffer settings
         config->replayEnabled = GetPrivateProfileIntA(
             "ReplayBuffer", "Enabled", FALSE, configPath);
-        config->replayStorageType = (ReplayStorageType)GetPrivateProfileIntA(
-            "ReplayBuffer", "StorageType", REPLAY_STORAGE_DISK, configPath);
         config->replayDuration = GetPrivateProfileIntA(
             "ReplayBuffer", "Duration", 60, configPath);
         config->replayCaptureSource = (CaptureMode)GetPrivateProfileIntA(
@@ -143,9 +140,6 @@ void Config_Save(const AppConfig* config) {
     // Replay buffer settings
     sprintf(buffer, "%d", config->replayEnabled);
     WritePrivateProfileStringA("ReplayBuffer", "Enabled", buffer, configPath);
-    
-    sprintf(buffer, "%d", config->replayStorageType);
-    WritePrivateProfileStringA("ReplayBuffer", "StorageType", buffer, configPath);
     
     sprintf(buffer, "%d", config->replayDuration);
     WritePrivateProfileStringA("ReplayBuffer", "Duration", buffer, configPath);

@@ -21,7 +21,6 @@ typedef struct {
     volatile BOOL saveRequested;
     volatile BOOL saveComplete;
     char savePath[MAX_PATH];
-    char tempFilePath[MAX_PATH];
     int frameWidth;
     int frameHeight;
 } ReplayBufferState;

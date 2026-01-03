@@ -28,10 +28,6 @@ typedef struct {
     IMFMediaType* inputType;        // BGRA input format
     IMFMediaType* outputType;       // H.264 output format
     
-    // Codec info (SPS/PPS for MP4 muxing)
-    BYTE* codecPrivateData;         // SPS + PPS NAL units
-    DWORD codecPrivateSize;
-    
     // Settings
     int width;
     int height;
@@ -59,10 +55,6 @@ BOOL H264Encoder_Init(H264MemoryEncoder* enc, int width, int height, int fps, Qu
 // outFrame->data is allocated by this function, caller must free it
 // Returns TRUE on success
 BOOL H264Encoder_EncodeFrame(H264MemoryEncoder* enc, const BYTE* bgraData, LONGLONG timestamp, EncodedFrame* outFrame);
-
-// Get codec private data (SPS/PPS) for MP4 muxing
-// Returns pointer to internal buffer (do not free)
-const BYTE* H264Encoder_GetCodecPrivateData(H264MemoryEncoder* enc, DWORD* outSize);
 
 // Flush encoder (get any remaining buffered frames)
 // Call repeatedly until returns FALSE

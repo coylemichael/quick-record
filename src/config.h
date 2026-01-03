@@ -33,12 +33,6 @@ typedef enum {
     QUALITY_LOSSLESS
 } QualityPreset;
 
-// Replay buffer storage types
-typedef enum {
-    REPLAY_STORAGE_RAM = 0,    // Store frames in RAM (fast, high RAM usage)
-    REPLAY_STORAGE_DISK = 1    // Store as temp files (slower, lower RAM)
-} ReplayStorageType;
-
 typedef struct {
     // Recording settings
     OutputFormat outputFormat;
@@ -52,7 +46,6 @@ typedef struct {
     
     // Replay buffer settings (instant replay)
     BOOL replayEnabled;              // Enable replay buffer
-    ReplayStorageType replayStorageType;  // RAM or disk storage
     int replayDuration;              // Buffer duration in seconds (60-1200)
     CaptureMode replayCaptureSource; // What to capture for replay
     int replayMonitorIndex;          // Which monitor (if MODE_MONITOR)
