@@ -8,6 +8,9 @@
 #include <windows.h>
 #include "config.h"
 
+// Maximum encoded audio samples to store
+#define MAX_AUDIO_SAMPLES 16384
+
 typedef struct {
     BOOL enabled;
     int durationSeconds;
@@ -23,6 +26,12 @@ typedef struct {
     char savePath[MAX_PATH];
     int frameWidth;
     int frameHeight;
+    
+    // Audio state
+    BOOL audioEnabled;
+    char audioSource1[256];
+    char audioSource2[256];
+    char audioSource3[256];
 } ReplayBufferState;
 
 BOOL ReplayBuffer_Init(ReplayBufferState* state);

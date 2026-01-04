@@ -15,6 +15,7 @@
 #include <stdio.h>
 
 #include "action_toolbar.h"
+#include "audio_device.h"
 #include "border.h"
 #include "capture.h"
 
@@ -157,6 +158,12 @@ extern HWND g_controlWnd;
 #define ID_CMB_REPLAY_FPS       4010
 #define ID_STATIC_REPLAY_RAM    4011
 #define ID_STATIC_REPLAY_CALC   4012
+
+// Audio capture settings control IDs
+#define ID_CHK_AUDIO_ENABLED    5001
+#define ID_CMB_AUDIO_SOURCE1    5002
+#define ID_CMB_AUDIO_SOURCE2    5003
+#define ID_CMB_AUDIO_SOURCE3    5004
 
 // Action toolbar button IDs
 #define ID_ACTION_RECORD   3001
@@ -1576,7 +1583,7 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
                         RECT ctrlRect;
                         GetWindowRect(hwnd, &ctrlRect);
                         int settingsW = 620;
-                        int settingsH = 555;  // Height to fit all controls with RAM explanation
+                        int settingsH = 725;  // Height to fit all controls including audio section
                         int ctrlCenterX = (ctrlRect.left + ctrlRect.right) / 2;
                         
                         g_settingsWnd = CreateWindowExA(
@@ -2005,6 +2012,71 @@ static RECT CalculateAspectRect(RECT monBounds, int aspectW, int aspectH) {
     result.bottom = result.top + rectH;
     
     return result;
+}
+
+// Helper: Populate an audio dropdown with devices
+// Returns the index that matches the given deviceId, or 0 if not found
+static int PopulateAudioDropdown(HWND comboBox, const AudioDeviceList* devices, const char* selectedDeviceId) {
+    if (!comboBox || !devices) return 0;
+    
+    int selectedIdx = 0;
+    int currentIdx = 0;
+    
+    // Add "None (Disabled)" option
+    SendMessageA(comboBox, CB_ADDSTRING, 0, (LPARAM)"None (Disabled)");
+    currentIdx++;
+    
+    // Add separator for outputs (system audio)
+    SendMessageA(comboBox, CB_ADDSTRING, 0, (LPARAM)"--- System Audio (Loopback) ---");
+    currentIdx++;
+    
+    // Add output devices
+    for (int i = 0; i < devices->count; i++) {
+        if (devices->devices[i].type == AUDIO_DEVICE_OUTPUT) {
+            char displayName[160];
+            if (devices->devices[i].isDefault) {
+                sprintf(displayName, "%s (Default)", devices->devices[i].name);
+            } else {
+                strncpy(displayName, devices->devices[i].name, sizeof(displayName) - 1);
+                displayName[sizeof(displayName) - 1] = '\0';
+            }
+            SendMessageA(comboBox, CB_ADDSTRING, 0, (LPARAM)displayName);
+            
+            // Check if this is the selected device
+            if (selectedDeviceId && selectedDeviceId[0] != '\0' &&
+                strcmp(devices->devices[i].id, selectedDeviceId) == 0) {
+                selectedIdx = currentIdx;
+            }
+            currentIdx++;
+        }
+    }
+    
+    // Add separator for inputs (microphones)
+    SendMessageA(comboBox, CB_ADDSTRING, 0, (LPARAM)"--- Microphones ---");
+    currentIdx++;
+    
+    // Add input devices
+    for (int i = 0; i < devices->count; i++) {
+        if (devices->devices[i].type == AUDIO_DEVICE_INPUT) {
+            char displayName[160];
+            if (devices->devices[i].isDefault) {
+                sprintf(displayName, "%s (Default)", devices->devices[i].name);
+            } else {
+                strncpy(displayName, devices->devices[i].name, sizeof(displayName) - 1);
+                displayName[sizeof(displayName) - 1] = '\0';
+            }
+            SendMessageA(comboBox, CB_ADDSTRING, 0, (LPARAM)displayName);
+            
+            // Check if this is the selected device
+            if (selectedDeviceId && selectedDeviceId[0] != '\0' &&
+                strcmp(devices->devices[i].id, selectedDeviceId) == 0) {
+                selectedIdx = currentIdx;
+            }
+            currentIdx++;
+        }
+    }
+    
+    return selectedIdx;
 }
 
 // Update RAM usage estimate label in settings
@@ -2596,6 +2668,66 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                 SendMessage(lblCalc, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
             }
             
+            // ============================================================
+            // AUDIO CAPTURE SECTION
+            // ============================================================
+            y += 35;
+            
+            // Divider line
+            HWND audioDivider = CreateWindowExA(0, "STATIC", "",
+                WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ,
+                labelX, y, contentW, 2, hwnd, NULL, g_hInstance, NULL);
+            y += 14;
+            
+            // Enable Audio Capture checkbox
+            HWND chkAudio = CreateWindowExA(0, "BUTTON", "Enable Audio Capture",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                labelX, y, 200, 24, hwnd, (HMENU)ID_CHK_AUDIO_ENABLED, g_hInstance, NULL);
+            SendMessage(chkAudio, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            SendMessage(chkAudio, BM_SETCHECK, g_config.audioEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+            y += 38;
+            
+            // Enumerate audio devices
+            AudioDeviceList audioDevices;
+            AudioDevice_Enumerate(&audioDevices);
+            
+            // Audio Source 1
+            HWND lblAudio1 = CreateWindowExA(0, "STATIC", "Audio source 1",
+                WS_CHILD | WS_VISIBLE,
+                labelX, y + 5, labelW, 20, hwnd, NULL, g_hInstance, NULL);
+            SendMessage(lblAudio1, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            HWND cmbAudio1 = CreateWindowExA(0, "COMBOBOX", "",
+                WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                controlX, y, controlW, 200, hwnd, (HMENU)ID_CMB_AUDIO_SOURCE1, g_hInstance, NULL);
+            SendMessage(cmbAudio1, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            y += rowH;
+            
+            // Audio Source 2
+            HWND lblAudio2 = CreateWindowExA(0, "STATIC", "Audio source 2",
+                WS_CHILD | WS_VISIBLE,
+                labelX, y + 5, labelW, 20, hwnd, NULL, g_hInstance, NULL);
+            SendMessage(lblAudio2, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            HWND cmbAudio2 = CreateWindowExA(0, "COMBOBOX", "",
+                WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                controlX, y, controlW, 200, hwnd, (HMENU)ID_CMB_AUDIO_SOURCE2, g_hInstance, NULL);
+            SendMessage(cmbAudio2, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            y += rowH;
+            
+            // Audio Source 3
+            HWND lblAudio3 = CreateWindowExA(0, "STATIC", "Audio source 3",
+                WS_CHILD | WS_VISIBLE,
+                labelX, y + 5, labelW, 20, hwnd, NULL, g_hInstance, NULL);
+            SendMessage(lblAudio3, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            HWND cmbAudio3 = CreateWindowExA(0, "COMBOBOX", "",
+                WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                controlX, y, controlW, 200, hwnd, (HMENU)ID_CMB_AUDIO_SOURCE3, g_hInstance, NULL);
+            SendMessage(cmbAudio3, WM_SETFONT, (WPARAM)g_settingsFont, TRUE);
+            
+            // Populate audio dropdowns using helper function
+            SendMessage(cmbAudio1, CB_SETCURSEL, PopulateAudioDropdown(cmbAudio1, &audioDevices, g_config.audioSource1), 0);
+            SendMessage(cmbAudio2, CB_SETCURSEL, PopulateAudioDropdown(cmbAudio2, &audioDevices, g_config.audioSource2), 0);
+            SendMessage(cmbAudio3, CB_SETCURSEL, PopulateAudioDropdown(cmbAudio3, &audioDevices, g_config.audioSource3), 0);
+            
             // Initialize preview border and area selector
             PreviewBorder_Init(g_hInstance);
             AreaSelector_Init(g_hInstance);
@@ -2789,6 +2921,46 @@ static LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
                     g_waitingForHotkey = TRUE;
                     SetWindowTextA(GetDlgItem(hwnd, ID_BTN_REPLAY_HOTKEY), "Press a key...");
                     SetFocus(hwnd);  // Focus the window to receive key events
+                    break;
+                    
+                case ID_CHK_AUDIO_ENABLED:
+                    g_config.audioEnabled = (IsDlgButtonChecked(hwnd, ID_CHK_AUDIO_ENABLED) == BST_CHECKED);
+                    break;
+                    
+                case ID_CMB_AUDIO_SOURCE1:
+                    if (HIWORD(wParam) == CBN_SELCHANGE) {
+                        int idx = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_AUDIO_SOURCE1), CB_GETCURSEL, 0, 0);
+                        char* deviceId = (char*)SendMessage(GetDlgItem(hwnd, ID_CMB_AUDIO_SOURCE1), CB_GETITEMDATA, idx, 0);
+                        if (deviceId && deviceId != (char*)CB_ERR) {
+                            strncpy(g_config.audioSource1, deviceId, sizeof(g_config.audioSource1) - 1);
+                        } else {
+                            g_config.audioSource1[0] = '\0';
+                        }
+                    }
+                    break;
+                    
+                case ID_CMB_AUDIO_SOURCE2:
+                    if (HIWORD(wParam) == CBN_SELCHANGE) {
+                        int idx = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_AUDIO_SOURCE2), CB_GETCURSEL, 0, 0);
+                        char* deviceId = (char*)SendMessage(GetDlgItem(hwnd, ID_CMB_AUDIO_SOURCE2), CB_GETITEMDATA, idx, 0);
+                        if (deviceId && deviceId != (char*)CB_ERR) {
+                            strncpy(g_config.audioSource2, deviceId, sizeof(g_config.audioSource2) - 1);
+                        } else {
+                            g_config.audioSource2[0] = '\0';
+                        }
+                    }
+                    break;
+                    
+                case ID_CMB_AUDIO_SOURCE3:
+                    if (HIWORD(wParam) == CBN_SELCHANGE) {
+                        int idx = (int)SendMessage(GetDlgItem(hwnd, ID_CMB_AUDIO_SOURCE3), CB_GETCURSEL, 0, 0);
+                        char* deviceId = (char*)SendMessage(GetDlgItem(hwnd, ID_CMB_AUDIO_SOURCE3), CB_GETITEMDATA, idx, 0);
+                        if (deviceId && deviceId != (char*)CB_ERR) {
+                            strncpy(g_config.audioSource3, deviceId, sizeof(g_config.audioSource3) - 1);
+                        } else {
+                            g_config.audioSource3[0] = '\0';
+                        }
+                    }
                     break;
             }
             return 0;

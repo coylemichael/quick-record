@@ -7,8 +7,9 @@
 #define SAMPLE_BUFFER_H
 
 #include <windows.h>
-#include "h264_encoder.h"
+#include "nvenc_encoder.h"
 #include "config.h"
+#include "mp4_muxer.h"
 
 // Stored sample in the buffer
 typedef struct {
@@ -33,6 +34,9 @@ typedef struct {
     int height;                 // Video height
     int fps;                    // Frame rate
     QualityPreset quality;      // Quality preset
+    
+    BYTE seqHeader[256];        // HEVC VPS/SPS/PPS sequence header
+    DWORD seqHeaderSize;        // Sequence header size
     
     CRITICAL_SECTION lock;      // Thread safety
     BOOL initialized;
@@ -63,7 +67,14 @@ size_t SampleBuffer_GetMemoryUsage(SampleBuffer* buf);
 // Uses passthrough muxing (no re-encoding)
 BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath);
 
+// Get copies of samples for external muxing (caller must free)
+// Used for audio+video muxing
+BOOL SampleBuffer_GetSamplesForMuxing(SampleBuffer* buf, MuxerSample** samples, int* count);
+
 // Clear all samples from buffer
 void SampleBuffer_Clear(SampleBuffer* buf);
+
+// Set HEVC sequence header (VPS/SPS/PPS) for muxing
+void SampleBuffer_SetSequenceHeader(SampleBuffer* buf, const BYTE* header, DWORD size);
 
 #endif // SAMPLE_BUFFER_H

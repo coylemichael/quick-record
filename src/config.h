@@ -54,6 +54,12 @@ typedef struct {
     int replayAspectRatio;           // 0=Native, 1=16:9, 2=16:10, 3=4:3, 4=21:9, 5=32:9
     int replayFPS;                   // 30 or 60
     
+    // Audio capture settings
+    BOOL audioEnabled;               // Enable audio capture
+    char audioSource1[128];          // Device ID for audio source 1 (empty = disabled)
+    char audioSource2[128];          // Device ID for audio source 2 (empty = disabled)
+    char audioSource3[128];          // Device ID for audio source 3 (empty = disabled)
+    
     // Save location
     char savePath[MAX_PATH];
     

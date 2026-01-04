@@ -210,11 +210,14 @@ void SampleBuffer_Clear(SampleBuffer* buf) {
 }
 
 // Write buffered samples to MP4 file using muxer module
-// Snapshots buffer contents, then delegates muxing to mp4_muxer
+// Deep copies all data under lock to prevent use-after-free from eviction,
+// then releases lock before muxing (which can be slow)
 BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
     if (!buf || !buf->initialized || !outputPath) return FALSE;
     
+    BufLog("WriteToFile: entering, getting lock...\n");
     EnterCriticalSection(&buf->lock);
+    BufLog("WriteToFile: lock acquired\n");
     
     if (buf->count == 0) {
         LeaveCriticalSection(&buf->lock);
@@ -222,29 +225,26 @@ BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
         return FALSE;
     }
     
+    int count = buf->count;
+    
     // Calculate duration from timestamps
     double bufDuration = 0.0;
-    if (buf->count > 0) {
-        int newestIdx = (buf->head - 1 + buf->capacity) % buf->capacity;
-        bufDuration = (double)(buf->samples[newestIdx].timestamp - buf->samples[buf->tail].timestamp) / 10000000.0;
-    }
-    BufLog("WriteToFile: %d samples, %.1fs to %s\n", buf->count, bufDuration, outputPath);
+    int newestIdx = (buf->head - 1 + buf->capacity) % buf->capacity;
+    bufDuration = (double)(buf->samples[newestIdx].timestamp - buf->samples[buf->tail].timestamp) / 10000000.0;
+    BufLog("WriteToFile: %d samples, %.1fs to %s\n", count, bufDuration, outputPath);
     
-    // Allocate MuxerSample array to snapshot buffer contents
-    MuxerSample* samples = (MuxerSample*)malloc(buf->count * sizeof(MuxerSample));
+    // Allocate sample array
+    BufLog("WriteToFile: allocating %d samples (%zu bytes)\n", count, count * sizeof(MuxerSample));
+    MuxerSample* samples = (MuxerSample*)malloc(count * sizeof(MuxerSample));
     if (!samples) {
         LeaveCriticalSection(&buf->lock);
-        BufLog("WriteToFile: failed to allocate sample array\n");
+        BufLog("WriteToFile: failed to allocate samples array\n");
         return FALSE;
     }
     
-    // Snapshot buffer contents (copy pointers, muxer will only read)
-    int sampleCount = 0;
-    int idx = buf->tail;
-    LONGLONG firstTimestamp = 0;  // Will normalize timestamps to start at 0
-    
-    // First pass: find the first timestamp
-    for (int i = 0; i < buf->count; i++) {
+    // Find first timestamp for normalization
+    LONGLONG firstTimestamp = 0;
+    for (int i = 0; i < count; i++) {
         BufferedSample* src = &buf->samples[(buf->tail + i) % buf->capacity];
         if (src->data && src->size > 0) {
             firstTimestamp = src->timestamp;
@@ -252,33 +252,118 @@ BOOL SampleBuffer_WriteToFile(SampleBuffer* buf, const char* outputPath) {
         }
     }
     
-    // Second pass: copy samples with normalized timestamps
-    for (int i = 0; i < buf->count; i++) {
-        BufferedSample* src = &buf->samples[idx];
+    // Deep copy all samples while holding lock (prevents use-after-free)
+    BufLog("WriteToFile: deep copying samples...\n");
+    int copiedCount = 0;
+    size_t totalBytes = 0;
+    for (int i = 0; i < count; i++) {
+        BufferedSample* src = &buf->samples[(buf->tail + i) % buf->capacity];
         if (src->data && src->size > 0) {
-            samples[sampleCount].data = src->data;
-            samples[sampleCount].size = src->size;
-            samples[sampleCount].timestamp = src->timestamp - firstTimestamp;  // Normalize to start at 0
-            samples[sampleCount].duration = src->duration;
-            samples[sampleCount].isKeyframe = src->isKeyframe;
-            sampleCount++;
+            samples[copiedCount].data = (BYTE*)malloc(src->size);
+            if (samples[copiedCount].data) {
+                memcpy(samples[copiedCount].data, src->data, src->size);
+                samples[copiedCount].size = src->size;
+                samples[copiedCount].timestamp = src->timestamp - firstTimestamp;
+                samples[copiedCount].duration = src->duration;
+                samples[copiedCount].isKeyframe = src->isKeyframe;
+                totalBytes += src->size;
+                copiedCount++;
+            }
         }
-        idx = (idx + 1) % buf->capacity;
     }
+    BufLog("WriteToFile: copied %d samples (%zu bytes total)\n", copiedCount, totalBytes);
     
-    // Build muxer config from buffer properties
+    // Capture config
     MuxerConfig config;
     config.width = buf->width;
     config.height = buf->height;
     config.fps = buf->fps;
     config.quality = buf->quality;
+    config.seqHeader = buf->seqHeaderSize > 0 ? buf->seqHeader : NULL;
+    config.seqHeaderSize = buf->seqHeaderSize;
+    
+    BufLog("WriteToFile: releasing lock, calling muxer...\n");
+    LeaveCriticalSection(&buf->lock);
+    // Lock released! All data is now in our own deep-copied memory
+    
+    // Mux to file (this can be slow, but we're not holding the lock)
+    BOOL success = MP4Muxer_WriteFile(outputPath, samples, copiedCount, &config);
+    BufLog("WriteToFile: muxer returned %s\n", success ? "OK" : "FAILED");
+    
+    // Free deep-copied sample data
+    BufLog("WriteToFile: freeing sample copies...\n");
+    for (int i = 0; i < copiedCount; i++) {
+        if (samples[i].data) free(samples[i].data);
+    }
+    free(samples);
+    BufLog("WriteToFile: done\n");
+    
+    return success;
+}
+
+// Get copies of samples for external muxing (caller must free)
+// Deep copies all data under lock to prevent use-after-free from eviction
+BOOL SampleBuffer_GetSamplesForMuxing(SampleBuffer* buf, MuxerSample** outSamples, int* outCount) {
+    if (!buf || !buf->initialized || !outSamples || !outCount) return FALSE;
+    
+    *outSamples = NULL;
+    *outCount = 0;
+    
+    EnterCriticalSection(&buf->lock);
+    
+    int count = buf->count;
+    if (count == 0) {
+        LeaveCriticalSection(&buf->lock);
+        return FALSE;
+    }
+    
+    // Allocate output array
+    MuxerSample* samples = (MuxerSample*)malloc(count * sizeof(MuxerSample));
+    if (!samples) {
+        LeaveCriticalSection(&buf->lock);
+        return FALSE;
+    }
+    
+    // Find first timestamp for normalization
+    LONGLONG firstTimestamp = 0;
+    for (int i = 0; i < count; i++) {
+        BufferedSample* src = &buf->samples[(buf->tail + i) % buf->capacity];
+        if (src->data && src->size > 0) {
+            firstTimestamp = src->timestamp;
+            break;
+        }
+    }
+    
+    // Deep copy all samples while holding lock (prevents use-after-free)
+    int copiedCount = 0;
+    for (int i = 0; i < count; i++) {
+        BufferedSample* src = &buf->samples[(buf->tail + i) % buf->capacity];
+        if (src->data && src->size > 0) {
+            samples[copiedCount].data = (BYTE*)malloc(src->size);
+            if (samples[copiedCount].data) {
+                memcpy(samples[copiedCount].data, src->data, src->size);
+                samples[copiedCount].size = src->size;
+                samples[copiedCount].timestamp = src->timestamp - firstTimestamp;
+                samples[copiedCount].duration = src->duration;
+                samples[copiedCount].isKeyframe = src->isKeyframe;
+                copiedCount++;
+            }
+        }
+    }
     
     LeaveCriticalSection(&buf->lock);
     
-    // Delegate muxing to dedicated module
-    BOOL success = MP4Muxer_WriteFile(outputPath, samples, sampleCount, &config);
+    *outSamples = samples;
+    *outCount = copiedCount;
+    return copiedCount > 0;
+}
+
+void SampleBuffer_SetSequenceHeader(SampleBuffer* buf, const BYTE* header, DWORD size) {
+    if (!buf || !header || size == 0 || size > sizeof(buf->seqHeader)) return;
     
-    free(samples);
-    
-    return success;
+    EnterCriticalSection(&buf->lock);
+    memcpy(buf->seqHeader, header, size);
+    buf->seqHeaderSize = size;
+    LeaveCriticalSection(&buf->lock);
+    BufLog("SetSequenceHeader: %u bytes\n", size);
 }

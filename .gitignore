@@ -15,6 +15,9 @@ lwsr_config.ini
 *.user
 *.sln.docstates
 
+# External SDKs (download separately)
+Video_Codec_Interface_13.0.19/
+
 # Backup files
 *.bak
 *~

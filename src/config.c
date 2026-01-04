@@ -45,6 +45,12 @@ void Config_Load(AppConfig* config) {
     config->replayAspectRatio = 0;  // Native (no aspect ratio cropping)
     config->replayFPS = 60;          // 60 FPS default
     
+    // Audio defaults (disabled, no sources selected)
+    config->audioEnabled = FALSE;
+    config->audioSource1[0] = '\0';
+    config->audioSource2[0] = '\0';
+    config->audioSource3[0] = '\0';
+    
     // Default save path to Videos folder
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_MYVIDEO, NULL, 0, config->savePath))) {
         strcat(config->savePath, "\\Recordings");
@@ -93,6 +99,16 @@ void Config_Load(AppConfig* config) {
             "ReplayBuffer", "AspectRatio", 0, configPath);
         config->replayFPS = GetPrivateProfileIntA(
             "ReplayBuffer", "FPS", 60, configPath);
+        
+        // Audio settings
+        config->audioEnabled = GetPrivateProfileIntA(
+            "Audio", "Enabled", 0, configPath);
+        GetPrivateProfileStringA("Audio", "Source1", "",
+            config->audioSource1, sizeof(config->audioSource1), configPath);
+        GetPrivateProfileStringA("Audio", "Source2", "",
+            config->audioSource2, sizeof(config->audioSource2), configPath);
+        GetPrivateProfileStringA("Audio", "Source3", "",
+            config->audioSource3, sizeof(config->audioSource3), configPath);
         
         GetPrivateProfileStringA("Recording", "SavePath", config->savePath,
             config->savePath, MAX_PATH, configPath);
@@ -167,6 +183,13 @@ void Config_Save(const AppConfig* config) {
     
     sprintf(buffer, "%d", config->replayFPS);
     WritePrivateProfileStringA("ReplayBuffer", "FPS", buffer, configPath);
+    
+    // Audio settings
+    sprintf(buffer, "%d", config->audioEnabled);
+    WritePrivateProfileStringA("Audio", "Enabled", buffer, configPath);
+    WritePrivateProfileStringA("Audio", "Source1", config->audioSource1, configPath);
+    WritePrivateProfileStringA("Audio", "Source2", config->audioSource2, configPath);
+    WritePrivateProfileStringA("Audio", "Source3", config->audioSource3, configPath);
     
     WritePrivateProfileStringA("Recording", "SavePath", config->savePath, configPath);
     

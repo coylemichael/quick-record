@@ -457,6 +457,99 @@ BYTE* Capture_GetFrame(CaptureState* state, UINT64* timestamp) {
     return state->frameBuffer;
 }
 
+ID3D11Texture2D* Capture_GetFrameTexture(CaptureState* state, UINT64* timestamp) {
+    if (!state->initialized || !state->duplication) return NULL;
+    
+    IDXGIResource* desktopResource = NULL;
+    DXGI_OUTDUPL_FRAME_INFO frameInfo;
+    
+    // Use 0ms timeout - caller handles frame pacing, don't wait here
+    HRESULT hr = state->duplication->lpVtbl->AcquireNextFrame(
+        state->duplication, 0, &frameInfo, &desktopResource);
+    
+    if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
+        // No new frame available - return last texture to maintain frame rate
+        if (state->gpuTexture) {
+            if (timestamp) *timestamp = state->lastFrameTime;
+            return state->gpuTexture;
+        }
+        // No texture yet - first frame not captured, need to wait
+        return NULL;
+    }
+    
+    if (hr == DXGI_ERROR_ACCESS_LOST) {
+        // Desktop duplication lost - needs reinit (handled by caller)
+        return NULL;
+    }
+    
+    if (FAILED(hr)) {
+        // Other error - return last texture if available to maintain framerate
+        if (state->gpuTexture) {
+            if (timestamp) *timestamp = state->lastFrameTime;
+            return state->gpuTexture;
+        }
+        return NULL;
+    }
+    
+    ID3D11Texture2D* desktopTexture = NULL;
+    hr = desktopResource->lpVtbl->QueryInterface(desktopResource, &IID_ID3D11Texture2D, 
+                                                  (void**)&desktopTexture);
+    desktopResource->lpVtbl->Release(desktopResource);
+    
+    if (FAILED(hr)) {
+        state->duplication->lpVtbl->ReleaseFrame(state->duplication);
+        return NULL;
+    }
+    
+    // Create or reuse GPU texture (stays on GPU, no CPU access)
+    if (!state->gpuTexture) {
+        D3D11_TEXTURE2D_DESC desc;
+        desktopTexture->lpVtbl->GetDesc(desktopTexture, &desc);
+        
+        D3D11_TEXTURE2D_DESC gpuDesc = {0};
+        gpuDesc.Width = state->captureWidth;
+        gpuDesc.Height = state->captureHeight;
+        gpuDesc.MipLevels = 1;
+        gpuDesc.ArraySize = 1;
+        gpuDesc.Format = desc.Format;  // BGRA
+        gpuDesc.SampleDesc.Count = 1;
+        gpuDesc.Usage = D3D11_USAGE_DEFAULT;
+        gpuDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        gpuDesc.CPUAccessFlags = 0;
+        gpuDesc.MiscFlags = 0;
+        
+        hr = state->device->lpVtbl->CreateTexture2D(state->device, &gpuDesc, NULL, &state->gpuTexture);
+        if (FAILED(hr)) {
+            desktopTexture->lpVtbl->Release(desktopTexture);
+            state->duplication->lpVtbl->ReleaseFrame(state->duplication);
+            return NULL;
+        }
+    }
+    
+    // Copy region to GPU texture (GPU to GPU copy)
+    D3D11_BOX srcBox;
+    srcBox.left = state->captureRect.left - state->outputDesc.DesktopCoordinates.left;
+    srcBox.top = state->captureRect.top - state->outputDesc.DesktopCoordinates.top;
+    srcBox.right = srcBox.left + state->captureWidth;
+    srcBox.bottom = srcBox.top + state->captureHeight;
+    srcBox.front = 0;
+    srcBox.back = 1;
+    
+    state->context->lpVtbl->CopySubresourceRegion(
+        state->context,
+        (ID3D11Resource*)state->gpuTexture, 0, 0, 0, 0,
+        (ID3D11Resource*)desktopTexture, 0, &srcBox
+    );
+    
+    desktopTexture->lpVtbl->Release(desktopTexture);
+    state->duplication->lpVtbl->ReleaseFrame(state->duplication);
+    
+    state->lastFrameTime = frameInfo.LastPresentTime.QuadPart;
+    if (timestamp) *timestamp = state->lastFrameTime;
+    
+    return state->gpuTexture;
+}
+
 void Capture_ReleaseFrame(CaptureState* state) {
     (void)state; // Frame is already released in GetFrame
 }
@@ -469,6 +562,11 @@ void Capture_Shutdown(CaptureState* state) {
     if (state->frameBuffer) {
         free(state->frameBuffer);
         state->frameBuffer = NULL;
+    }
+    
+    if (state->gpuTexture) {
+        state->gpuTexture->lpVtbl->Release(state->gpuTexture);
+        state->gpuTexture = NULL;
     }
     
     if (state->stagingTexture) {

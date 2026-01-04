@@ -15,8 +15,9 @@ typedef struct {
     ID3D11Device* device;
     ID3D11DeviceContext* context;
     IDXGIOutputDuplication* duplication;
-    ID3D11Texture2D* stagingTexture;
-    IDXGIAdapter* adapter;  // Keep adapter for switching outputs
+    ID3D11Texture2D* stagingTexture;      // CPU-accessible staging texture
+    ID3D11Texture2D* gpuTexture;          // GPU texture for zero-copy path
+    IDXGIAdapter* adapter;                // Keep adapter for switching outputs
     
     // Monitor info
     DXGI_OUTPUT_DESC outputDesc;
@@ -64,6 +65,11 @@ int Capture_GetRefreshRate(CaptureState* state);
 
 // Shutdown capture system
 void Capture_Shutdown(CaptureState* state);
+
+// Get frame as GPU texture (stays on GPU, no CPU copy)
+// Returns a BGRA texture that can be used for GPU processing
+// Caller must NOT release the texture - it's owned by capture state
+ID3D11Texture2D* Capture_GetFrameTexture(CaptureState* state, UINT64* timestamp);
 
 // Helper: Get window rect for window capture mode
 BOOL Capture_GetWindowRect(HWND hwnd, RECT* rect);
