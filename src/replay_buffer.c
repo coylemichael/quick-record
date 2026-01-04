@@ -541,9 +541,12 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
                 NVENCEncoder_GetStats(g_encoder, &encFrames, &avgEncMs);
                 
                 double duration = SampleBuffer_GetDuration(&g_sampleBuffer);
+                int bufCount = SampleBuffer_GetCount(&g_sampleBuffer);
                 size_t memMB = SampleBuffer_GetMemoryUsage(&g_sampleBuffer) / (1024 * 1024);
-                ReplayLog("Status: %d/%d frames in %.1fs (encode=%.1f fps, attempt=%.1f fps, target=%d fps), buffer=%.1fs, %zu MB\n", 
-                          frameCount, attemptCount, realElapsedSec, actualFPS, attemptFPS, fps, duration, memMB);
+                size_t memKB = SampleBuffer_GetMemoryUsage(&g_sampleBuffer) / 1024;
+                int avgKBPerFrame = bufCount > 0 ? (int)(memKB / bufCount) : 0;
+                ReplayLog("Status: %d/%d frames in %.1fs (encode=%.1f fps, attempt=%.1f fps, target=%d fps), buffer=%.1fs (%d samples, %zu MB, %d KB/frame)\n", 
+                          frameCount, attemptCount, realElapsedSec, actualFPS, attemptFPS, fps, duration, bufCount, memMB, avgKBPerFrame);
                 
                 // Log failure breakdown if any
                 if (captureNullCount + convertNullCount + encodeFailCount > 0) {

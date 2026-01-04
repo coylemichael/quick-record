@@ -104,6 +104,7 @@ typedef enum {
 #include "encoder.h"
 #include "config.h"
 #include "replay_buffer.h"
+#include "logger.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -1871,9 +1872,12 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         
         case WM_HOTKEY: {
+            Logger_Log("WM_HOTKEY received: wParam=%llu\n", (unsigned long long)wParam);
             if (wParam == HOTKEY_REPLAY_SAVE) {
+                Logger_Log("HOTKEY_REPLAY_SAVE matched, isBuffering=%d\n", g_replayBuffer.isBuffering);
                 // Check if replay buffer is actually running with frames
                 if (!g_replayBuffer.isBuffering) {
+                    Logger_Log("Not buffering, aborting save\n");
                     MessageBeep(MB_ICONWARNING);
                     return 0;
                 }
@@ -1886,8 +1890,13 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
                     g_config.savePath, st.wYear, st.wMonth, st.wDay,
                     st.wHour, st.wMinute, st.wSecond);
                 
+                Logger_Log("Generated filename: %s\n", filename);
+                Logger_Log("Calling ReplayBuffer_Save...\n");
+                
                 // Save the replay
                 BOOL success = ReplayBuffer_Save(&g_replayBuffer, filename);
+                
+                Logger_Log("ReplayBuffer_Save returned: %d\n", success);
                 
                 // Show notification
                 if (success) {

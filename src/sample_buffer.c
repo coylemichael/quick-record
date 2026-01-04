@@ -30,6 +30,8 @@ static void FreeSample(BufferedSample* sample) {
 static void EvictOldSamples(SampleBuffer* buf, LONGLONG newTimestamp) {
     if (buf->count == 0) return;
     
+    int evicted = 0;
+    
     // Keep evicting while (newest - oldest) > maxDuration
     while (buf->count > 0) {
         BufferedSample* oldest = &buf->samples[buf->tail];
@@ -45,6 +47,7 @@ static void EvictOldSamples(SampleBuffer* buf, LONGLONG newTimestamp) {
         FreeSample(oldest);
         buf->tail = (buf->tail + 1) % buf->capacity;
         buf->count--;
+        evicted++;
     }
     
     // Also check capacity limit
@@ -53,6 +56,15 @@ static void EvictOldSamples(SampleBuffer* buf, LONGLONG newTimestamp) {
         FreeSample(oldest);
         buf->tail = (buf->tail + 1) % buf->capacity;
         buf->count--;
+        evicted++;
+    }
+    
+    // Log eviction occasionally to show buffer is working
+    static int evictLogCounter = 0;
+    if (evicted > 0 && (++evictLogCounter % 300) == 0 && buf->count > 0) {
+        double span = (double)(newTimestamp - buf->samples[buf->tail].timestamp) / 10000000.0;
+        BufLog("Eviction: removed %d samples, count now %d, span=%.2fs\n", 
+               evicted, buf->count, span);
     }
 }
 

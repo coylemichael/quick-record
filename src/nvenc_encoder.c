@@ -368,7 +368,11 @@ BOOL NVENCEncoder_SubmitTexture(NVENCEncoder* enc, ID3D11Texture2D* nv12Source, 
     // Check if pipeline is full
     if (enc->pendingCount >= NUM_BUFFERS) {
         LeaveCriticalSection(&enc->submitLock);
-        NvLog("NVENCEncoder: Pipeline full (%d pending)\n", enc->pendingCount);
+        // Rate-limit this log to avoid spam (log once per 100 occurrences)
+        static int pipelineFullCount = 0;
+        if ((++pipelineFullCount % 100) == 1) {
+            NvLog("NVENCEncoder: Pipeline full (%d pending) - frame dropped\n", enc->pendingCount);
+        }
         return FALSE;
     }
     
