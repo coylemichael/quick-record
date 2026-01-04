@@ -18,6 +18,7 @@ typedef struct {
     int monitorIndex;
     
     BOOL isBuffering;
+    volatile BOOL bufferReady;  // Set when buffer thread has initialized and is capturing
     HANDLE bufferThread;
     CRITICAL_SECTION lock;
     

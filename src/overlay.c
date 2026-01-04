@@ -1874,10 +1874,16 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         case WM_HOTKEY: {
             Logger_Log("WM_HOTKEY received: wParam=%llu\n", (unsigned long long)wParam);
             if (wParam == HOTKEY_REPLAY_SAVE) {
-                Logger_Log("HOTKEY_REPLAY_SAVE matched, isBuffering=%d\n", g_replayBuffer.isBuffering);
+                Logger_Log("HOTKEY_REPLAY_SAVE matched, isBuffering=%d, bufferReady=%d\n", 
+                           g_replayBuffer.isBuffering, g_replayBuffer.bufferReady);
                 // Check if replay buffer is actually running with frames
                 if (!g_replayBuffer.isBuffering) {
                     Logger_Log("Not buffering, aborting save\n");
+                    MessageBeep(MB_ICONWARNING);
+                    return 0;
+                }
+                if (!g_replayBuffer.bufferReady) {
+                    Logger_Log("Buffer not ready yet, aborting save\n");
                     MessageBeep(MB_ICONWARNING);
                     return 0;
                 }

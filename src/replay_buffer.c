@@ -160,6 +160,7 @@ BOOL ReplayBuffer_Start(ReplayBufferState* state, const AppConfig* config) {
     state->saveRequested = FALSE;
     state->saveComplete = FALSE;
     state->savePath[0] = '\0';
+    state->bufferReady = FALSE;  // Will be set TRUE when thread is ready
     
     // Reset audio buffer
     EnterCriticalSection(&g_audioLock);
@@ -192,6 +193,11 @@ void ReplayBuffer_Stop(ReplayBufferState* state) {
 
 BOOL ReplayBuffer_Save(ReplayBufferState* state, const char* outputPath) {
     if (!state || !outputPath || !state->isBuffering) return FALSE;
+    
+    // Don't allow saves until buffer thread is ready and has captured some frames
+    if (!state->bufferReady) {
+        return FALSE;  // Buffer thread still initializing
+    }
     
     strncpy(state->savePath, outputPath, MAX_PATH - 1);
     state->saveComplete = FALSE;
@@ -404,6 +410,10 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
     
     int frameCount = 0;
     int lastLogFrame = 0;
+    
+    // Signal that buffer thread is ready to accept save requests
+    state->bufferReady = TRUE;
+    ReplayLog("Buffer thread ready, entering capture loop\n");
     
     while (!g_stopBuffering) {
         // === AUDIO CAPTURE ===
