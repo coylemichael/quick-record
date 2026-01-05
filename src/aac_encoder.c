@@ -258,8 +258,16 @@ AACEncoder* AACEncoder_Create(void) {
     hr = encoder->outputType->lpVtbl->GetBlobSize(encoder->outputType, &MF_MT_USER_DATA, &blobSize);
     if (SUCCEEDED(hr) && blobSize > 0) {
         encoder->configData = (BYTE*)malloc(blobSize);
-        encoder->outputType->lpVtbl->GetBlob(encoder->outputType, &MF_MT_USER_DATA, 
-            encoder->configData, blobSize, &encoder->configSize);
+        if (encoder->configData) {
+            hr = encoder->outputType->lpVtbl->GetBlob(encoder->outputType, &MF_MT_USER_DATA, 
+                encoder->configData, blobSize, &encoder->configSize);
+            if (FAILED(hr)) {
+                // GetBlob failed - free the malloc'd buffer
+                free(encoder->configData);
+                encoder->configData = NULL;
+                encoder->configSize = 0;
+            }
+        }
     }
     
     // Start streaming

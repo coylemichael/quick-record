@@ -161,10 +161,6 @@ void GPUConverter_Shutdown(GPUConverter* conv) {
         conv->outputView->lpVtbl->Release(conv->outputView);
         conv->outputView = NULL;
     }
-    if (conv->inputView) {
-        conv->inputView->lpVtbl->Release(conv->inputView);
-        conv->inputView = NULL;
-    }
     if (conv->outputTexture) {
         conv->outputTexture->lpVtbl->Release(conv->outputTexture);
         conv->outputTexture = NULL;

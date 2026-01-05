@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.1] - 2026-01-05
+
+### Fixed
+- **Audio capture thread leak** - Per-source capture threads now properly tracked and cleaned up
+  - Added `captureThread` handle to `AudioCaptureSource` struct
+  - `AudioCapture_Stop()` now waits for and closes all source threads before returning
+- **Replay buffer static globals** - Reset all static globals at start of `BufferThreadProc`
+  - Prevents stale state from persisting between buffer start/stop cycles
+  - Fixed potential memory corruption on replay buffer restart
+- **AAC encoder config leak** - Added proper error handling when `GetBlob` fails after malloc
+  - Memory is now freed if `GetBlob` returns failure
+
+### Removed
+- **Redundant stop flag** - Removed legacy `g_stopBuffering` flag from replay buffer
+  - Flag was never read; state machine events now control all thread coordination
+- **Dead code in GPU converter** - Removed unused `inputView` member from `GPUConverter` struct
+  - Input view is created per-frame in `GPUConverter_Convert()`, not stored
+
+---
+
 ## [1.2.0] - 2026-01-05
 
 ### Changed

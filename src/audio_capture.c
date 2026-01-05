@@ -40,6 +40,7 @@ struct AudioCaptureSource {
     int bufferAvailable;
     CRITICAL_SECTION lock;
     
+    HANDLE captureThread;  // Thread handle for proper cleanup
     BOOL active;
 };
 
@@ -604,7 +605,7 @@ BOOL AudioCapture_Start(AudioCaptureContext* ctx) {
         }
         
         // Start capture thread for this source
-        CreateThread(NULL, 0, SourceCaptureThread, src, 0, NULL);
+        src->captureThread = CreateThread(NULL, 0, SourceCaptureThread, src, 0, NULL);
     }
     
     // Record start time
@@ -622,7 +623,7 @@ void AudioCapture_Stop(AudioCaptureContext* ctx) {
     
     ctx->running = FALSE;
     
-    // Stop sources
+    // Stop sources and wait for their threads
     for (int i = 0; i < ctx->sourceCount; i++) {
         AudioCaptureSource* src = ctx->sources[i];
         if (!src) continue;
@@ -631,6 +632,13 @@ void AudioCapture_Stop(AudioCaptureContext* ctx) {
         
         if (src->audioClient) {
             src->audioClient->lpVtbl->Stop(src->audioClient);
+        }
+        
+        // Wait for source capture thread to finish
+        if (src->captureThread) {
+            WaitForSingleObject(src->captureThread, 1000);
+            CloseHandle(src->captureThread);
+            src->captureThread = NULL;
         }
     }
     

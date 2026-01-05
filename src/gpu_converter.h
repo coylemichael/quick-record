@@ -18,7 +18,6 @@ typedef struct {
     ID3D11VideoContext* videoContext;
     ID3D11VideoProcessor* videoProcessor;
     ID3D11VideoProcessorEnumerator* processorEnum;
-    ID3D11VideoProcessorInputView* inputView;
     ID3D11VideoProcessorOutputView* outputView;
     ID3D11Texture2D* outputTexture;  // NV12 output
     int width;

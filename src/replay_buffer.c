@@ -23,7 +23,6 @@
 #pragma comment(lib, "winmm.lib")
 
 // Global state
-static volatile BOOL g_stopBuffering = FALSE;
 static NVENCEncoder* g_encoder = NULL;
 static SampleBuffer g_sampleBuffer = {0};
 
@@ -208,7 +207,6 @@ BOOL ReplayBuffer_Start(ReplayBufferState* state, const AppConfig* config) {
     g_audioSampleCount = 0;
     LeaveCriticalSection(&g_audioLock);
     
-    g_stopBuffering = FALSE;
     state->bufferThread = CreateThread(NULL, 0, BufferThreadProc, state, 0, NULL);
     state->isBuffering = (state->bufferThread != NULL);
     
@@ -234,7 +232,6 @@ void ReplayBuffer_Stop(ReplayBufferState* state) {
     InterlockedExchange(&state->state, REPLAY_STATE_STOPPING);
     SetEvent(state->hStopEvent);
     
-    g_stopBuffering = TRUE;
     if (state->bufferThread) {
         WaitForSingleObject(state->bufferThread, 10000);
         CloseHandle(state->bufferThread);
@@ -321,6 +318,18 @@ int ReplayBuffer_EstimateRAMUsage(int durationSec, int w, int h, int fps) {
 static DWORD WINAPI BufferThreadProc(LPVOID param) {
     ReplayBufferState* state = (ReplayBufferState*)param;
     if (!state) return 1;
+    
+    // Reset static globals at start of each run to prevent stale state
+    g_encoder = NULL;
+    ZeroMemory(&g_sampleBuffer, sizeof(g_sampleBuffer));
+    g_seqHeaderSize = 0;
+    g_audioCapture = NULL;
+    g_aacEncoder = NULL;
+    g_audioSamples = NULL;
+    g_audioSampleCount = 0;
+    g_audioSampleCapacity = 0;
+    g_aacConfigData = NULL;
+    g_aacConfigSize = 0;
     
     ReplayLog("BufferThread started (ShadowPlay RAM mode)\n");
     ReplayLog("Config: replayEnabled=%d, duration=%d, captureSource=%d, monitorIndex=%d\n",
