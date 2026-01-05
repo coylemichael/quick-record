@@ -219,6 +219,7 @@ static DWORD g_recordStartTime = 0;
 static BOOL g_recordingPanelHovered = FALSE;  // Hover state for recording panel
 static BOOL g_waitingForHotkey = FALSE;       // Waiting for user to press hotkey
 static HWND g_lastHoveredIconBtn = NULL;      // Track which icon button was last hovered
+static HWND g_lastHoveredCaptureBtn = NULL;   // Track which capture button was last hovered
 static BOOL g_minimizedToTray = FALSE;        // Currently minimized to system tray
 static NOTIFYICONDATAA g_trayIcon = {0};      // System tray icon data
 
@@ -2031,6 +2032,37 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
                     }
                     g_lastHoveredIconBtn = currentHovered;
                 }
+                
+                // Also check capture buttons for hover
+                HWND captureBtns[] = {
+                    GetDlgItem(hwnd, ID_MODE_AREA),
+                    GetDlgItem(hwnd, ID_MODE_WINDOW),
+                    GetDlgItem(hwnd, ID_MODE_MONITOR),
+                    GetDlgItem(hwnd, ID_MODE_ALL)
+                };
+                
+                HWND currentHoveredCapture = NULL;
+                for (int i = 0; i < 4; i++) {
+                    if (captureBtns[i]) {
+                        RECT rc;
+                        GetWindowRect(captureBtns[i], &rc);
+                        if (PtInRect(&rc, pt)) {
+                            currentHoveredCapture = captureBtns[i];
+                            break;
+                        }
+                    }
+                }
+                
+                // Only invalidate if capture button hover state changed
+                if (currentHoveredCapture != g_lastHoveredCaptureBtn) {
+                    if (g_lastHoveredCaptureBtn) {
+                        InvalidateRect(g_lastHoveredCaptureBtn, NULL, FALSE);
+                    }
+                    if (currentHoveredCapture) {
+                        InvalidateRect(currentHoveredCapture, NULL, FALSE);
+                    }
+                    g_lastHoveredCaptureBtn = currentHoveredCapture;
+                }
             }
             return 0;
             
@@ -2070,15 +2102,13 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
             BOOL isIconButton = (ctlId == ID_BTN_SETTINGS || ctlId == ID_BTN_MINIMIZE || 
                                  ctlId == ID_BTN_RECORD || ctlId == ID_BTN_CLOSE);
             
-            // For icon buttons, check actual mouse position for hover
+            // Check actual mouse position for hover (more reliable than ODS_HOTLIGHT)
             BOOL isHovered = FALSE;
-            if (isIconButton) {
+            {
                 POINT pt;
                 GetCursorPos(&pt);
                 ScreenToClient(dis->hwndItem, &pt);
                 isHovered = PtInRect(&dis->rcItem, pt);
-            } else {
-                isHovered = (dis->itemState & ODS_HOTLIGHT) || (dis->itemState & ODS_FOCUS);
             }
             
             // For settings button, check if settings window is open
