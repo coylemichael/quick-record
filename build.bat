@@ -1,8 +1,9 @@
 @echo off
 REM Ultra Lightweight Screen Recorder - Build Script
-REM Usage: build.bat [debug]
+REM Usage: build.bat [debug|release]
 REM   build.bat        - Release build (optimized)
 REM   build.bat debug  - Debug build (symbols, no optimization)
+REM   build.bat release - Release build (explicit)
 
 setlocal enabledelayedexpansion
 
@@ -10,8 +11,17 @@ REM Check for debug flag
 set BUILD_TYPE=release
 if /i "%1"=="debug" set BUILD_TYPE=debug
 
+REM Check if MSVC is already in PATH (e.g., from GitHub Actions ilammy/msvc-dev-cmd)
+where cl.exe >nul 2>&1
+if %ERRORLEVEL%==0 (
+    echo MSVC already in PATH, skipping vcvars setup
+    goto :build
+)
+
 REM Find Visual Studio
-if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
+if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
+    call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
     call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
     call "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
@@ -44,6 +54,8 @@ if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\B
     echo Build Tools installed. Please restart your terminal and run build.bat again.
     exit /b 0
 )
+
+:build
 
 REM Create output directory
 if not exist "bin" mkdir bin

@@ -23,15 +23,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Build
-        run: |
-          if not exist "bin" mkdir bin
-          rc /fo bin\lwsr.res src\lwsr.rc
-          cl /O2 /MT /DNDEBUG /Fe:bin\lwsr.exe src\*.c bin\lwsr.res ^
-            user32.lib gdi32.lib ole32.lib oleaut32.lib mfplat.lib mfuuid.lib mfreadwrite.lib ^
-            dxgi.lib d3d11.lib shell32.lib comdlg32.lib shlwapi.lib windowscodecs.lib dwmapi.lib ^
-            strmiids.lib uuid.lib winmm.lib /link /SUBSYSTEM:WINDOWS
-          del *.obj 2>nul
-          del bin\lwsr.res 2>nul
+        run: build.bat release
         shell: cmd
 
       - name: Generate SHA256
