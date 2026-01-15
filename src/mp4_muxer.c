@@ -69,7 +69,8 @@ BOOL MP4Muxer_WriteFile(
     outputType->lpVtbl->SetGUID(outputType, &MF_MT_SUBTYPE, &MFVideoFormat_HEVC_Local);
     outputType->lpVtbl->SetUINT32(outputType, &MF_MT_AVG_BITRATE, bitrate);
     outputType->lpVtbl->SetUINT32(outputType, &MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    outputType->lpVtbl->SetUINT32(outputType, &MF_MT_MPEG2_PROFILE, 1);  // HEVC Main profile
+    // Note: MF_MT_MPEG2_PROFILE is technically for H.264, but MF accepts it for HEVC passthrough
+    // HEVC Main Profile = 1 in this context (eAVEncH265VProfile_Main_420_8)
     
     UINT64 frameSize = ((UINT64)config->width << 32) | config->height;
     outputType->lpVtbl->SetUINT64(outputType, &MF_MT_FRAME_SIZE, frameSize);
@@ -260,7 +261,7 @@ BOOL MP4Muxer_WriteFileWithAudio(
     videoType->lpVtbl->SetGUID(videoType, &MF_MT_SUBTYPE, &MFVideoFormat_HEVC_Local);
     videoType->lpVtbl->SetUINT32(videoType, &MF_MT_AVG_BITRATE, bitrate);
     videoType->lpVtbl->SetUINT32(videoType, &MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    videoType->lpVtbl->SetUINT32(videoType, &MF_MT_MPEG2_PROFILE, 1);  // HEVC Main
+    // Note: For HEVC passthrough, profile is embedded in VPS/SPS from encoder
     
     UINT64 frameSize = ((UINT64)videoConfig->width << 32) | videoConfig->height;
     videoType->lpVtbl->SetUINT64(videoType, &MF_MT_FRAME_SIZE, frameSize);

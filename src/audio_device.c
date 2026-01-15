@@ -3,33 +3,26 @@
  * Uses Windows Core Audio (MMDevice) API
  */
 
-#define INITGUID
-#include <initguid.h>
+#define COBJMACROS
+#define DEFINE_AUDIO_GUIDS  // This file defines the shared audio GUIDs
 #include "audio_device.h"
+#include "audio_guids.h"
+#include "util.h"
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <stdio.h>
 
-// Define the GUIDs we need
-DEFINE_GUID(CLSID_MMDeviceEnumerator_Local, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
-DEFINE_GUID(IID_IMMDeviceEnumerator_Local, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6);
-
 // COM interfaces
 static IMMDeviceEnumerator* g_deviceEnumerator = NULL;
-
-// Convert wide string to UTF-8
-static void WideToUtf8(const WCHAR* wide, char* utf8, int maxLen) {
-    WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, maxLen, NULL, NULL);
-}
 
 BOOL AudioDevice_Init(void) {
     if (g_deviceEnumerator) return TRUE;  // Already initialized
     
     HRESULT hr = CoCreateInstance(
-        &CLSID_MMDeviceEnumerator_Local,
+        &CLSID_MMDeviceEnumerator_Shared,
         NULL,
         CLSCTX_ALL,
-        &IID_IMMDeviceEnumerator_Local,
+        &IID_IMMDeviceEnumerator_Shared,
         (void**)&g_deviceEnumerator
     );
     
@@ -74,7 +67,7 @@ static int EnumerateDeviceType(AudioDeviceList* list, EDataFlow dataFlow, AudioD
         LPWSTR wideId = NULL;
         defaultDevice->lpVtbl->GetId(defaultDevice, &wideId);
         if (wideId) {
-            WideToUtf8(wideId, defaultId, sizeof(defaultId));
+            Util_WideToUtf8(wideId, defaultId, sizeof(defaultId));
             CoTaskMemFree(wideId);
         }
         defaultDevice->lpVtbl->Release(defaultDevice);
@@ -92,7 +85,7 @@ static int EnumerateDeviceType(AudioDeviceList* list, EDataFlow dataFlow, AudioD
         LPWSTR wideId = NULL;
         device->lpVtbl->GetId(device, &wideId);
         if (wideId) {
-            WideToUtf8(wideId, info->id, sizeof(info->id));
+            Util_WideToUtf8(wideId, info->id, sizeof(info->id));
             CoTaskMemFree(wideId);
         }
         
@@ -104,7 +97,7 @@ static int EnumerateDeviceType(AudioDeviceList* list, EDataFlow dataFlow, AudioD
             PropVariantInit(&varName);
             hr = props->lpVtbl->GetValue(props, &PKEY_Device_FriendlyName, &varName);
             if (SUCCEEDED(hr) && varName.vt == VT_LPWSTR) {
-                WideToUtf8(varName.pwszVal, info->name, sizeof(info->name));
+                Util_WideToUtf8(varName.pwszVal, info->name, sizeof(info->name));
             }
             PropVariantClear(&varName);
             props->lpVtbl->Release(props);
@@ -181,7 +174,7 @@ BOOL AudioDevice_GetDefaultOutput(char* deviceId, int maxLen) {
     LPWSTR wideId = NULL;
     device->lpVtbl->GetId(device, &wideId);
     if (wideId) {
-        WideToUtf8(wideId, deviceId, maxLen);
+        Util_WideToUtf8(wideId, deviceId, maxLen);
         CoTaskMemFree(wideId);
     }
     
@@ -205,7 +198,7 @@ BOOL AudioDevice_GetDefaultInput(char* deviceId, int maxLen) {
     LPWSTR wideId = NULL;
     device->lpVtbl->GetId(device, &wideId);
     if (wideId) {
-        WideToUtf8(wideId, deviceId, maxLen);
+        Util_WideToUtf8(wideId, deviceId, maxLen);
         CoTaskMemFree(wideId);
     }
     

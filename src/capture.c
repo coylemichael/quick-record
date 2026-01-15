@@ -370,6 +370,12 @@ BYTE* Capture_GetFrame(CaptureState* state, UINT64* timestamp) {
         return NULL;
     }
     
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_ACCESS_LOST) {
+        // Device removed or access lost - need to reinitialize
+        // Caller should handle NULL return and reinit capture
+        return NULL;
+    }
+    
     if (FAILED(hr)) {
         // Duplication might need to be recreated (resolution change, etc.)
         return NULL;

@@ -19,8 +19,10 @@
 #include "gpu_converter.h"
 #include <stdio.h>
 #include <mmsystem.h>  // For timeBeginPeriod/timeEndPeriod
+#include <objbase.h>   // For CoInitializeEx/CoUninitialize
 
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "ole32.lib")
 
 // Global state
 static NVENCEncoder* g_encoder = NULL;
@@ -321,6 +323,7 @@ BOOL ReplayBuffer_Save(ReplayBufferState* state, const char* outputPath) {
     
     // Set up save parameters
     strncpy(state->savePath, outputPath, MAX_PATH - 1);
+    state->savePath[MAX_PATH - 1] = '\0';
     state->saveSuccess = FALSE;
     
     // Signal save request via event (proper synchronization)
@@ -664,9 +667,9 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
                     // Mux with audio
                     ReplayLog("  Starting save (audio+video path, %d audio samples)...\n", audioCount);
                     MuxerAudioConfig audioConfig;
-                    audioConfig.sampleRate = 48000;
-                    audioConfig.channels = 2;
-                    audioConfig.bitrate = 192000;
+                    audioConfig.sampleRate = AAC_SAMPLE_RATE;   // Use constants from aac_encoder.h
+                    audioConfig.channels = AAC_CHANNELS;
+                    audioConfig.bitrate = AAC_BITRATE;
                     audioConfig.configData = g_aacConfigData;
                     audioConfig.configSize = g_aacConfigSize;
                     

@@ -33,4 +33,16 @@ RECT Util_CalculateAspectRect(RECT sourceBounds, int ratioW, int ratioH);
 // Index: 0=Native, 1=16:9, 2=9:16, 3=1:1, 4=4:5, 5=16:10, 6=4:3, 7=21:9, 8=32:9
 void Util_GetAspectRatioDimensions(int aspectIndex, int* ratioW, int* ratioH);
 
+// ============================================================================
+// String Conversion Utilities
+// ============================================================================
+
+// Convert wide string to UTF-8
+// Returns number of bytes written (excluding null terminator), or 0 on failure
+int Util_WideToUtf8(const WCHAR* wide, char* utf8, int maxLen);
+
+// Convert UTF-8 string to wide string
+// Returns number of characters written (excluding null terminator), or 0 on failure
+int Util_Utf8ToWide(const char* utf8, WCHAR* wide, int maxLen);
+
 #endif // UTIL_H

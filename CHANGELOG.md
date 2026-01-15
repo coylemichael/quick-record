@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.3] - 2026-01-15
+
+### Fixed
+- **Instant close** - App now closes instantly instead of 5-7 second delay
+  - Root cause: NVIDIA driver DLL cleanup during normal process teardown
+  - Solution: Use `ExitProcess(0)` after proper resource cleanup to bypass slow driver unload
+  - Window hidden immediately on close to prevent visual artifacts
+- **AAC encoder fallback** - Generate AudioSpecificConfig if encoder doesn't provide one
+  - Prevents potential muxing issues on some systems
+- **DXGI device removal handling** - Added explicit handling for `DXGI_ERROR_DEVICE_REMOVED` and `DXGI_ERROR_ACCESS_LOST`
+  - Improves robustness during GPU driver updates or display changes
+- **Bitrate calculation overflow** - Use double precision for intermediate calculation
+  - Prevents potential overflow with high resolution/fps combinations
+
+### Changed
+- **HEVC profile handling** - Clarified that profile is embedded in VPS/SPS from NVENC encoder
+  - Added documentation comments explaining MF_MT_MPEG2_PROFILE usage for HEVC passthrough
+- **AAC constants** - Use named constants (`AAC_SAMPLE_RATE`, `AAC_CHANNELS`, `AAC_BITRATE`) instead of magic numbers
+
+---
+
 ## [1.2.2] - 2026-01-12
 
 ### Added

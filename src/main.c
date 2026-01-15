@@ -147,12 +147,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         RegisterHotKey(g_controlWnd, HOTKEY_REPLAY_SAVE, 0, g_config.replaySaveKey);
     }
     
+    // Start watchdog for hang detection (optional - monitors for frozen app)
+    CrashHandler_StartWatchdog();
+    
     // Message loop
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
+        // Heartbeat to let watchdog know we're alive
+        CrashHandler_Heartbeat();
+        
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+    
+    // Stop watchdog before cleanup
+    CrashHandler_StopWatchdog();
     
     // Cleanup
     UnregisterHotKey(g_controlWnd, HOTKEY_REPLAY_SAVE);
@@ -162,6 +171,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     Capture_Shutdown(&g_capture);
     MFShutdown();
     CoUninitialize();
+    
+    // Shutdown crash handler last
+    CrashHandler_Shutdown();
     
     if (g_mutex) {
         ReleaseMutex(g_mutex);

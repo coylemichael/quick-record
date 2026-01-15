@@ -726,6 +726,7 @@ static void CaptureToFile(void) {
     ofn.Flags = OFN_OVERWRITEPROMPT;
     ofn.lpstrDefExt = "png";
     
+    BOOL clipboardTookOwnership = FALSE;
     if (GetSaveFileNameA(&ofn)) {
         // TODO: Save as PNG (requires GDI+ or other library)
         // For now, just show success message
@@ -735,12 +736,17 @@ static void CaptureToFile(void) {
         // Copy to clipboard as fallback
         if (OpenClipboard(NULL)) {
             EmptyClipboard();
-            SetClipboardData(CF_BITMAP, hBitmap);
+            if (SetClipboardData(CF_BITMAP, hBitmap)) {
+                clipboardTookOwnership = TRUE;  // Clipboard now owns the bitmap
+            }
             CloseClipboard();
         }
     }
     
-    DeleteObject(hBitmap);
+    // Only delete bitmap if clipboard didn't take ownership
+    if (!clipboardTookOwnership) {
+        DeleteObject(hBitmap);
+    }
     
     // Clear selection state - overlay stays hidden, show control panel
     g_selState = SEL_NONE;
@@ -1970,13 +1976,25 @@ static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
                     // Redraw button to show state change
                     InvalidateRect(GetDlgItem(hwnd, ID_BTN_RECORD), NULL, TRUE);
                     break;
-                case ID_BTN_CLOSE:
-                    // Stop recording if in progress, then exit
+                case ID_BTN_CLOSE: {
+                    // Hide window immediately to avoid visual artifacts
+                    ShowWindow(hwnd, SW_HIDE);
+                    
+                    // Stop recording if in progress
                     if (g_isRecording) {
                         Recording_Stop();
                     }
-                    PostQuitMessage(0);
+                    
+                    // Stop replay buffer
+                    extern ReplayBufferState g_replayBuffer;
+                    if (g_replayBuffer.isBuffering) {
+                        ReplayBuffer_Stop(&g_replayBuffer);
+                    }
+                    
+                    // Fast exit - normal return path has slow NVIDIA driver cleanup
+                    ExitProcess(0);
                     break;
+                }
                 case ID_BTN_MINIMIZE:
                     // Minimize to system tray
                     MinimizeToTray();

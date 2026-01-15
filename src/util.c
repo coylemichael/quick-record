@@ -31,11 +31,14 @@ UINT32 Util_CalculateBitrate(int width, int height, int fps, QualityPreset quali
     if (fpsScale < 0.5f) fpsScale = 0.5f;
     if (fpsScale > 2.0f) fpsScale = 2.0f;
     
-    UINT32 bitrate = (UINT32)(baseMbps * resScale * fpsScale * 1000000.0f);
+    // Use double for intermediate calculation to avoid overflow
+    double bitrateCalc = (double)baseMbps * resScale * fpsScale * 1000000.0;
     
     // Bounds: 10 Mbps minimum, 150 Mbps maximum
-    if (bitrate < 10000000) bitrate = 10000000;
-    if (bitrate > 150000000) bitrate = 150000000;
+    if (bitrateCalc < 10000000.0) bitrateCalc = 10000000.0;
+    if (bitrateCalc > 150000000.0) bitrateCalc = 150000000.0;
+    
+    UINT32 bitrate = (UINT32)bitrateCalc;
     
     return bitrate;
 }
@@ -100,5 +103,25 @@ RECT Util_CalculateAspectRect(RECT sourceBounds, int ratioW, int ratioH) {
     result.right = result.left + rectW;
     result.bottom = result.top + rectH;
     
+    return result;
+}
+
+// ============================================================================
+// String Conversion Utilities
+// ============================================================================
+
+// Convert wide string to UTF-8
+int Util_WideToUtf8(const WCHAR* wide, char* utf8, int maxLen) {
+    if (!wide || !utf8 || maxLen <= 0) return 0;
+    int result = WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, maxLen, NULL, NULL);
+    if (result > 0) result--;  // Exclude null terminator from count
+    return result;
+}
+
+// Convert UTF-8 string to wide string
+int Util_Utf8ToWide(const char* utf8, WCHAR* wide, int maxLen) {
+    if (!utf8 || !wide || maxLen <= 0) return 0;
+    int result = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, maxLen);
+    if (result > 0) result--;  // Exclude null terminator from count
     return result;
 }

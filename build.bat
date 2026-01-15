@@ -75,7 +75,7 @@ set LIBS=user32.lib gdi32.lib d3d11.lib dxgi.lib mfplat.lib mfreadwrite.lib mfuu
 if "%BUILD_TYPE%"=="debug" (
     echo Building Lightweight Screen Recorder [DEBUG]...
     cl.exe /nologo /Od /Zi /MDd ^
-        /W4 ^
+        /W4 /wd4201 ^
         /D "DEBUG" /D "_DEBUG" /D "WIN32" /D "_WINDOWS" /D "_CRT_SECURE_NO_WARNINGS" /D "NVENCAPI=__stdcall" ^
         /Fe"bin\lwsr.exe" ^
         /Fd"bin\lwsr.pdb" ^
@@ -85,7 +85,7 @@ if "%BUILD_TYPE%"=="debug" (
 ) else (
     echo Building Lightweight Screen Recorder [RELEASE]...
     cl.exe /nologo /O2 /GL /GS- /MD ^
-        /W3 ^
+        /W3 /wd4201 ^
         /D "NDEBUG" /D "WIN32" /D "_WINDOWS" /D "_CRT_SECURE_NO_WARNINGS" /D "NVENCAPI=__stdcall" ^
         /Fe"bin\lwsr.exe" ^
         %SOURCES% ^

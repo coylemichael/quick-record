@@ -43,10 +43,12 @@ BOOL Encoder_Init(EncoderState* state, const char* outputPath,
     state->frameDuration = 10000000ULL / fps; // 100-nanosecond units
     
     strncpy(state->outputPath, outputPath, MAX_PATH - 1);
+    state->outputPath[MAX_PATH - 1] = '\0';
     
     // Ensure output directory exists
     char dirPath[MAX_PATH];
     strncpy(dirPath, outputPath, MAX_PATH - 1);
+    dirPath[MAX_PATH - 1] = '\0';
     char* lastSlash = strrchr(dirPath, '\\');
     if (lastSlash) {
         *lastSlash = '\0';

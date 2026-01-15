@@ -4,10 +4,11 @@
  */
 
 #define COBJMACROS
-#define INITGUID
-#include <initguid.h>
+#include <windows.h>
 
 #include "audio_capture.h"
+#include "audio_guids.h"
+#include "util.h"
 #include "logger.h"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
@@ -15,12 +16,6 @@
 #include <stdio.h>
 #include <math.h>
 #include <limits.h>
-
-// GUIDs
-DEFINE_GUID(IID_IAudioClient_Local, 0x1CB9AD4C, 0xDBFA, 0x4c32, 0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2);
-DEFINE_GUID(IID_IAudioCaptureClient_Local, 0xC8ADBD64, 0xE71E, 0x48a0, 0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17);
-DEFINE_GUID(CLSID_MMDeviceEnumerator_AC, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
-DEFINE_GUID(IID_IMMDeviceEnumerator_AC, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6);
 
 // Individual audio source capture
 struct AudioCaptureSource {
@@ -58,24 +53,14 @@ static IMMDeviceEnumerator* g_audioEnumerator = NULL;
 #define MIX_BUFFER_SIZE (AUDIO_BYTES_PER_SEC * 5)  // 5 seconds
 #define SOURCE_BUFFER_SIZE (AUDIO_BYTES_PER_SEC * 2)  // 2 seconds per source
 
-// Helper: Convert wide string to UTF-8
-static void WideToUtf8_AC(const WCHAR* wide, char* utf8, int maxLen) {
-    WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, maxLen, NULL, NULL);
-}
-
-// Helper: Convert UTF-8 to wide string
-static void Utf8ToWide(const char* utf8, WCHAR* wide, int maxLen) {
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, maxLen);
-}
-
 BOOL AudioCapture_Init(void) {
     if (g_audioEnumerator) return TRUE;
     
     HRESULT hr = CoCreateInstance(
-        &CLSID_MMDeviceEnumerator_AC,
+        &CLSID_MMDeviceEnumerator_Shared,
         NULL,
         CLSCTX_ALL,
-        &IID_IMMDeviceEnumerator_AC,
+        &IID_IMMDeviceEnumerator_Shared,
         (void**)&g_audioEnumerator
     );
     
@@ -110,7 +95,7 @@ static AudioCaptureSource* CreateSource(const char* deviceId) {
     
     // Get device by ID
     WCHAR wideId[256];
-    Utf8ToWide(deviceId, wideId, 256);
+    Util_Utf8ToWide(deviceId, wideId, 256);
     
     HRESULT hr = g_audioEnumerator->lpVtbl->GetDevice(g_audioEnumerator, wideId, &src->device);
     if (FAILED(hr)) {
@@ -122,7 +107,7 @@ static AudioCaptureSource* CreateSource(const char* deviceId) {
     // Activate audio client
     hr = src->device->lpVtbl->Activate(
         src->device,
-        &IID_IAudioClient_Local,
+        &IID_IAudioClient_Shared,
         CLSCTX_ALL,
         NULL,
         (void**)&src->audioClient
@@ -234,7 +219,7 @@ static BOOL InitSourceCapture(AudioCaptureSource* src) {
     // Get capture client
     hr = src->audioClient->lpVtbl->GetService(
         src->audioClient,
-        &IID_IAudioCaptureClient_Local,
+        &IID_IAudioCaptureClient_Shared,
         (void**)&src->captureClient
     );
     
@@ -534,6 +519,10 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
     AudioCaptureContext* ctx = (AudioCaptureContext*)param;
     if (!ctx) return 0;
     
+    // Peak tracking for logging - reset each session
+    int peakLeft = 0, peakRight = 0;
+    int logCounter = 0;
+    
     // Temp buffers for reading from sources
     BYTE* srcBuffers[MAX_AUDIO_SOURCES] = {0};
     int srcBytes[MAX_AUDIO_SOURCES] = {0};
@@ -669,11 +658,6 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
             BYTE* mixChunk = (BYTE*)malloc(bytesToMix);
             if (mixChunk) {
                 int numSamples = bytesToMix / AUDIO_BLOCK_ALIGN;
-                
-                // Track peak for logging - use context-local instead of statics
-                // to properly reset between capture sessions
-                static int peakLeft = 0, peakRight = 0;
-                static int logCounter = 0;
                 
                 for (int s = 0; s < numSamples; s++) {
                     int leftSum = 0, rightSum = 0;

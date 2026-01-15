@@ -270,6 +270,19 @@ AACEncoder* AACEncoder_Create(void) {
         }
     }
     
+    // Fallback: generate AudioSpecificConfig if not provided by encoder
+    if (!encoder->configData || encoder->configSize == 0) {
+        // AAC-LC AudioSpecificConfig: 2 bytes for 48kHz stereo
+        // Format: 5 bits audioObjectType (2=AAC-LC) + 4 bits samplingFrequencyIndex (3=48kHz) + 4 bits channelConfiguration (2=stereo) + 3 bits padding
+        // = 0x11 0x90 for 48kHz stereo AAC-LC
+        encoder->configData = (BYTE*)malloc(2);
+        if (encoder->configData) {
+            encoder->configData[0] = 0x11;  // AAC-LC (2) << 3 | upper 1 bit of freq index (3)
+            encoder->configData[1] = 0x90;  // lower 3 bits of freq index | channels (2) << 3
+            encoder->configSize = 2;
+        }
+    }
+    
     // Start streaming
     hr = encoder->transform->lpVtbl->ProcessMessage(encoder->transform, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     hr = encoder->transform->lpVtbl->ProcessMessage(encoder->transform, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);

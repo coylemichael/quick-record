@@ -17,7 +17,15 @@ void Logger_Init(const char* filename, const char* mode) {
     
     InitializeCriticalSection(&g_logLock);
     g_logFile = fopen(filename, mode);
-    g_logInitialized = TRUE;
+    
+    // Only mark as initialized if file opened successfully
+    // Critical section is still valid for later attempts
+    if (g_logFile) {
+        g_logInitialized = TRUE;
+    } else {
+        // Clean up critical section if file open failed
+        DeleteCriticalSection(&g_logLock);
+    }
 }
 
 void Logger_Shutdown(void) {

@@ -9,7 +9,7 @@ Lightweight screen recorder for Windows with instant replay. Buffer as much as y
 
 **To record:** Select capture mode → hit record → stop when done
 
-**To save a replay:** Press F4 anytime (buffer runs in background)
+**To save a replay:** Press F4 (default, changable in settings) anytime (buffer runs in background)
 
 </p>
 
