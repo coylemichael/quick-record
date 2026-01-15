@@ -114,6 +114,10 @@ struct NVENCEncoder {
     // Synchronization
     CRITICAL_SECTION submitLock;
     
+    // Per-instance diagnostic counters (avoid static pollution)
+    int pipelineFullCount;
+    int mutexTimeoutCount;
+    
     BOOL initialized;
     BOOL asyncMode;
 };
@@ -436,8 +440,8 @@ BOOL NVENCEncoder_SubmitTexture(NVENCEncoder* enc, ID3D11Texture2D* nv12Source, 
     if (enc->pendingCount >= NUM_BUFFERS) {
         LeaveCriticalSection(&enc->submitLock);
         // Rate-limit this log to avoid spam (log once per 100 occurrences)
-        static int pipelineFullCount = 0;
-        if ((++pipelineFullCount % 100) == 1) {
+        enc->pipelineFullCount++;
+        if ((enc->pipelineFullCount % 100) == 1) {
             NvLog("NVENCEncoder: Pipeline full (%d pending) - frame dropped\n", enc->pendingCount);
         }
         return FALSE;
@@ -454,8 +458,8 @@ BOOL NVENCEncoder_SubmitTexture(NVENCEncoder* enc, ID3D11Texture2D* nv12Source, 
     hr = enc->srcMutex[idx]->lpVtbl->AcquireSync(enc->srcMutex[idx], 0, 100);
     if (hr == WAIT_TIMEOUT || FAILED(hr)) {
         LeaveCriticalSection(&enc->submitLock);
-        static int mutexTimeoutCount = 0;
-        if ((++mutexTimeoutCount % 100) == 1) {
+        enc->mutexTimeoutCount++;
+        if ((enc->mutexTimeoutCount % 100) == 1) {
             NvLog("NVENCEncoder: Mutex acquire timeout[%d] (0x%08X)\n", idx, hr);
         }
         return FALSE;

@@ -39,6 +39,7 @@
 #include "overlay.h"
 #include "replay_buffer.h"
 #include "logger.h"
+#include "crash_handler.h"
 
 // Global state
 AppConfig g_config;
@@ -72,6 +73,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     (void)hPrevInstance;
     (void)nCmdShow;
     
+    // Initialize crash handler first
+    CrashHandler_Init();
+    
     // Parse command line arguments
     ParseCommandLine(lpCmdLine);
     
@@ -96,6 +100,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         MessageBoxA(NULL, "Failed to initialize COM", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
+    
+    // Set AppUserModelID for taskbar pinning
+    SetCurrentProcessExplicitAppUserModelID(L"CarnmorCyber.LightWeightScreenRecorder");
     
     // Initialize Media Foundation
     hr = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);

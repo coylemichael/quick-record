@@ -37,6 +37,7 @@ static MuxerAudioSample* g_audioSamples = NULL;
 static int g_audioSampleCount = 0;
 static int g_audioSampleCapacity = 0;
 static CRITICAL_SECTION g_audioLock;
+static BOOL g_audioLockInitialized = FALSE;  // Track CS initialization
 static BYTE* g_aacConfigData = NULL;
 static int g_aacConfigSize = 0;
 static LONGLONG g_audioMaxDuration = 0;  // Max duration in 100-ns units for eviction
@@ -123,6 +124,13 @@ static void AudioEncoderCallback(const AACSample* sample, void* userData) {
             if (newArr) {
                 g_audioSamples = newArr;
                 g_audioSampleCapacity = newCapacity;
+            } else {
+                // realloc failed - log and drop sample
+                static int reallocFailCount = 0;
+                if (++reallocFailCount <= 5) {
+                    ReplayLog("WARNING: Audio buffer realloc failed (count=%d, capacity=%d)\n", 
+                              g_audioSampleCount, newCapacity);
+                }
             }
         }
     }
@@ -168,6 +176,7 @@ BOOL ReplayBuffer_Init(ReplayBufferState* state) {
     
     state->state = REPLAY_STATE_UNINITIALIZED;
     InitializeCriticalSection(&g_audioLock);
+    g_audioLockInitialized = TRUE;
     return TRUE;
 }
 
@@ -185,7 +194,10 @@ void ReplayBuffer_Shutdown(ReplayBufferState* state) {
     state->hSaveCompleteEvent = NULL;
     state->hStopEvent = NULL;
     
-    DeleteCriticalSection(&g_audioLock);
+    if (g_audioLockInitialized) {
+        DeleteCriticalSection(&g_audioLock);
+        g_audioLockInitialized = FALSE;
+    }
     
     // Clean up audio samples
     if (g_audioSamples) {
@@ -594,6 +606,9 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
                 audioCopy = (MuxerAudioSample*)malloc(audioCount * sizeof(MuxerAudioSample));
                 if (audioCopy) {
                     LONGLONG firstAudioTs = g_audioSamples[0].timestamp;
+                    int copiedCount = 0;
+                    BOOL copyFailed = FALSE;
+                    
                     for (int i = 0; i < audioCount; i++) {
                         audioCopy[i].data = (BYTE*)malloc(g_audioSamples[i].size);
                         if (audioCopy[i].data) {
@@ -601,9 +616,25 @@ static DWORD WINAPI BufferThreadProc(LPVOID param) {
                             audioCopy[i].size = g_audioSamples[i].size;
                             audioCopy[i].timestamp = g_audioSamples[i].timestamp - firstAudioTs;
                             audioCopy[i].duration = g_audioSamples[i].duration;
+                            copiedCount++;
                         } else {
-                            audioCopy[i].size = 0;
+                            // malloc failed - free all previous copies and abort
+                            ReplayLog("WARNING: Audio copy malloc failed at sample %d/%d\n", i, audioCount);
+                            for (int j = 0; j < i; j++) {
+                                if (audioCopy[j].data) free(audioCopy[j].data);
+                            }
+                            free(audioCopy);
+                            audioCopy = NULL;
+                            copyFailed = TRUE;
+                            break;
                         }
+                    }
+                    
+                    // Update audioCount to reflect actual copied samples
+                    if (!copyFailed) {
+                        audioCount = copiedCount;
+                    } else {
+                        audioCount = 0;
                     }
                 }
             }

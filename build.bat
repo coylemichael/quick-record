@@ -64,7 +64,7 @@ REM Compile resource file (icon)
 rc.exe /nologo /fo "bin\lwsr.res" "src\lwsr.rc"
 
 REM Source files (single source of truth)
-set SOURCES=src\main.c src\config.c src\capture.c src\encoder.c src\overlay.c src\action_toolbar.c src\border.c src\replay_buffer.c src\nvenc_encoder.c src\sample_buffer.c src\mp4_muxer.c src\util.c src\logger.c src\audio_device.c src\audio_capture.c src\aac_encoder.c src\gpu_converter.c
+set SOURCES=src\main.c src\config.c src\capture.c src\encoder.c src\overlay.c src\action_toolbar.c src\border.c src\replay_buffer.c src\nvenc_encoder.c src\sample_buffer.c src\mp4_muxer.c src\util.c src\logger.c src\audio_device.c src\audio_capture.c src\aac_encoder.c src\gpu_converter.c src\crash_handler.c
 
 REM Resource file
 set RESOURCES=bin\lwsr.res

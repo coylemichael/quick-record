@@ -1109,6 +1109,11 @@ BOOL Overlay_Create(HINSTANCE hInstance) {
     wcSettings.hCursor = LoadCursor(NULL, IDC_ARROW);
     wcSettings.hbrBackground = (HBRUSH)(COLOR_3DFACE + 1);
     wcSettings.lpszClassName = "LWSRSettings";
+    // Load icons from EXE resource at correct sizes for taskbar
+    wcSettings.hIcon = (HICON)LoadImageA(hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, 
+                                         GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
+    wcSettings.hIconSm = (HICON)LoadImageA(hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON,
+                                           GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     RegisterClassExA(&wcSettings);
     
     // Register crosshair window class

@@ -44,6 +44,11 @@ struct AudioCaptureSource {
     
     HANDLE captureThread;  // Thread handle for proper cleanup
     BOOL active;
+    
+    // Timing for event-driven sources (virtual devices that don't send continuous packets)
+    LARGE_INTEGER lastPacketTime;   // Last time we received a packet from this source
+    LARGE_INTEGER perfFreq;         // Performance counter frequency
+    BOOL hasReceivedPacket;         // TRUE once we've received at least one packet
 };
 
 // Global enumerator
@@ -395,8 +400,12 @@ static DWORD WINAPI SourceCaptureThread(LPVOID param) {
                 int convertedBytes = 0;
                 
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                    // Silent - write zeros
-                    convertedBytes = numFrames * src->targetFormat.nBlockAlign;
+                    // Silent - write zeros with proper resampling
+                    // numFrames is in source sample rate, convert to target rate
+                    int srcRate = src->deviceFormat->nSamplesPerSec;
+                    int dstRate = src->targetFormat.nSamplesPerSec;
+                    int dstFrames = (int)((double)numFrames * dstRate / srcRate);
+                    convertedBytes = dstFrames * src->targetFormat.nBlockAlign;
                     if (convertedBytes > SOURCE_BUFFER_SIZE) {
                         convertedBytes = SOURCE_BUFFER_SIZE;
                     }
@@ -434,6 +443,10 @@ static DWORD WINAPI SourceCaptureThread(LPVOID param) {
                     src->bufferWritePos = (writePos + convertedBytes) % src->bufferSize;
                     src->bufferAvailable += convertedBytes;
                     
+                    // Record that we received a packet (for event-driven source detection)
+                    QueryPerformanceCounter(&src->lastPacketTime);
+                    src->hasReceivedPacket = TRUE;
+                    
                     LeaveCriticalSection(&src->lock);
                 }
             }
@@ -468,12 +481,6 @@ AudioCaptureContext* AudioCapture_Create(
     InitializeCriticalSection(&ctx->mixLock);
     QueryPerformanceFrequency(&ctx->perfFreq);
     
-    // Store volumes (clamp to 0-100)
-    int volumes[] = {volume1, volume2, volume3};
-    for (int i = 0; i < MAX_AUDIO_SOURCES; i++) {
-        ctx->volumes[i] = (volumes[i] < 0) ? 0 : (volumes[i] > 100) ? 100 : volumes[i];
-    }
-    
     // Allocate mix buffer
     ctx->mixBufferSize = MIX_BUFFER_SIZE;
     ctx->mixBuffer = (BYTE*)malloc(ctx->mixBufferSize);
@@ -483,13 +490,21 @@ AudioCaptureContext* AudioCapture_Create(
         return NULL;
     }
     
-    // Create sources
+    // Create sources and assign volumes to match source index
+    // This ensures volumes[i] corresponds to sources[i]
     const char* deviceIds[] = {deviceId1, deviceId2, deviceId3};
+    int volumes[] = {volume1, volume2, volume3};
+    
     for (int i = 0; i < 3; i++) {
         if (deviceIds[i] && deviceIds[i][0] != '\0') {
             AudioCaptureSource* src = CreateSource(deviceIds[i]);
             if (src) {
-                ctx->sources[ctx->sourceCount++] = src;
+                // Assign volume to match source index, not device slot index
+                int srcIdx = ctx->sourceCount;
+                ctx->volumes[srcIdx] = (volumes[i] < 0) ? 0 : (volumes[i] > 100) ? 100 : volumes[i];
+                ctx->sources[srcIdx] = src;
+                ctx->sourceCount++;
+                Logger_Log("Audio source %d: device slot %d, volume=%d%%\n", srcIdx, i, ctx->volumes[srcIdx]);
             }
         }
     }
@@ -522,82 +537,156 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
     // Temp buffers for reading from sources
     BYTE* srcBuffers[MAX_AUDIO_SOURCES] = {0};
     int srcBytes[MAX_AUDIO_SOURCES] = {0};
+    BOOL srcDormant[MAX_AUDIO_SOURCES] = {0};  // TRUE if source is event-driven and currently silent
     
     for (int i = 0; i < ctx->sourceCount; i++) {
         srcBuffers[i] = (BYTE*)malloc(4096);
     }
     
     const int chunkSize = 4096;  // Process in chunks
+    const double dormantThresholdMs = 100.0;  // Consider source dormant after 100ms of no packets
+    
+    // Rate limiting: track how much audio we should output based on elapsed time
+    LARGE_INTEGER rateStartTime;
+    QueryPerformanceCounter(&rateStartTime);
+    LONGLONG totalBytesOutput = 0;  // Total bytes we've written to mix buffer
     
     while (ctx->running) {
-        // Read from each source - use minBytes to keep sources synchronized
-        int minBytes = INT_MAX;
-        int activeSources = 0;
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
         
-        // First pass: check how much data is available from ALL sources
+        // Check how much data is available from each source
+        int maxBytes = 0;
+        int activeSources = 0;
+        int nonDormantSources = 0;
+        int availableBytes[MAX_AUDIO_SOURCES] = {0};
+        
         for (int i = 0; i < ctx->sourceCount; i++) {
             AudioCaptureSource* src = ctx->sources[i];
             if (!src || !src->active) continue;
             
             activeSources++;
             EnterCriticalSection(&src->lock);
-            int available = src->bufferAvailable;
+            availableBytes[i] = src->bufferAvailable;
+            
+            // Check if this source is dormant (event-driven virtual device with no recent packets)
+            // A source is dormant if:
+            // 1. It has received at least one packet (so we know it works)
+            // 2. It hasn't received a packet recently (> dormantThresholdMs)
+            // 3. Its buffer is empty
+            srcDormant[i] = FALSE;
+            if (src->hasReceivedPacket && availableBytes[i] == 0) {
+                double msSincePacket = (double)(now.QuadPart - src->lastPacketTime.QuadPart) * 1000.0 / src->perfFreq.QuadPart;
+                if (msSincePacket > dormantThresholdMs) {
+                    srcDormant[i] = TRUE;
+                }
+            }
+            
             LeaveCriticalSection(&src->lock);
             
-            if (available < minBytes) minBytes = available;
+            if (!srcDormant[i]) {
+                nonDormantSources++;
+                if (availableBytes[i] > maxBytes) {
+                    maxBytes = availableBytes[i];
+                }
+            }
         }
         
-        // Only proceed if all sources have at least some data
-        if (activeSources == 0 || minBytes <= 0 || minBytes == INT_MAX) {
+        // Need at least one non-dormant source with data to proceed
+        if (nonDormantSources == 0 || maxBytes == 0) {
             Sleep(2);  // Wait for data
             continue;
         }
         
-        // Cap at chunk size
-        if (minBytes > chunkSize) minBytes = chunkSize;
+        // Rate limiting: calculate how many bytes we SHOULD have output by now
+        // This prevents sources from "running ahead" of wall-clock time
+        double elapsedSec = (double)(now.QuadPart - rateStartTime.QuadPart) / ctx->perfFreq.QuadPart;
+        LONGLONG expectedBytes = (LONGLONG)(elapsedSec * AUDIO_BYTES_PER_SEC);
+        LONGLONG bytesAllowed = expectedBytes - totalBytesOutput;
         
-        // Second pass: read minBytes from each source (keeps them synchronized)
+        // If we're ahead of schedule, wait
+        if (bytesAllowed < chunkSize / 2) {
+            Sleep(2);
+            continue;
+        }
+        
+        // Process up to chunkSize bytes from non-dormant sources
+        int processBytes = maxBytes;
+        if (processBytes > chunkSize) processBytes = chunkSize;
+        // Also limit by rate
+        if (processBytes > bytesAllowed) processBytes = (int)bytesAllowed;
+        // Align to sample boundaries (4 bytes per sample for stereo 16-bit)
+        processBytes = (processBytes / AUDIO_BLOCK_ALIGN) * AUDIO_BLOCK_ALIGN;
+        if (processBytes <= 0) {
+            Sleep(1);
+            continue;
+        }
+        
+        // Read from each source - dormant sources contribute silence
         for (int i = 0; i < ctx->sourceCount; i++) {
             AudioCaptureSource* src = ctx->sources[i];
-            if (!src || !src->active) {
+            if (!src || !src->active || srcDormant[i]) {
+                // Dormant sources contribute silence (srcBytes[i] = 0 means silence in the mixer)
                 srcBytes[i] = 0;
                 continue;
             }
             
             EnterCriticalSection(&src->lock);
             
-            // Read exactly minBytes from this source
-            int readPos = (src->bufferWritePos - src->bufferAvailable + src->bufferSize) % src->bufferSize;
-            int toEnd = src->bufferSize - readPos;
+            // Read whatever is available up to processBytes
+            int toRead = src->bufferAvailable;
+            if (toRead > processBytes) toRead = processBytes;
             
-            if (minBytes <= toEnd) {
-                memcpy(srcBuffers[i], src->buffer + readPos, minBytes);
+            if (toRead > 0) {
+                int readPos = (src->bufferWritePos - src->bufferAvailable + src->bufferSize) % src->bufferSize;
+                int toEnd = src->bufferSize - readPos;
+                
+                if (toRead <= toEnd) {
+                    memcpy(srcBuffers[i], src->buffer + readPos, toRead);
+                } else {
+                    memcpy(srcBuffers[i], src->buffer + readPos, toEnd);
+                    memcpy(srcBuffers[i] + toEnd, src->buffer, toRead - toEnd);
+                }
+                
+                src->bufferAvailable -= toRead;
+                srcBytes[i] = toRead;
             } else {
-                memcpy(srcBuffers[i], src->buffer + readPos, toEnd);
-                memcpy(srcBuffers[i] + toEnd, src->buffer, minBytes - toEnd);
+                // Source has no data - will contribute silence
+                srcBytes[i] = 0;
             }
-            
-            src->bufferAvailable -= minBytes;
-            srcBytes[i] = minBytes;
             
             LeaveCriticalSection(&src->lock);
         }
         
-        // Mix sources - now all sources have exactly minBytes
-        if (minBytes > 0) {
-            BYTE* mixChunk = (BYTE*)malloc(minBytes);
+        // Find how many bytes to actually process (max of what any source provided)
+        int bytesToMix = 0;
+        for (int i = 0; i < ctx->sourceCount; i++) {
+            if (srcBytes[i] > bytesToMix) bytesToMix = srcBytes[i];
+        }
+        
+        // Mix sources - each source contributes what it has, silence for the rest
+        if (bytesToMix > 0) {
+            BYTE* mixChunk = (BYTE*)malloc(bytesToMix);
             if (mixChunk) {
-                int numSamples = minBytes / AUDIO_BLOCK_ALIGN;
+                int numSamples = bytesToMix / AUDIO_BLOCK_ALIGN;
                 
-                // Track peak for logging
+                // Track peak for logging (reset on first run)
                 static int peakLeft = 0, peakRight = 0;
                 static int logCounter = 0;
+                static BOOL peakInitialized = FALSE;
+                if (!peakInitialized) {
+                    peakLeft = 0;
+                    peakRight = 0;
+                    logCounter = 0;
+                    peakInitialized = TRUE;
+                }
                 
                 for (int s = 0; s < numSamples; s++) {
                     int leftSum = 0, rightSum = 0;
                     int srcCount = 0;
                     
                     for (int i = 0; i < ctx->sourceCount; i++) {
+                        // Check if this source has data for this sample
                         if (srcBytes[i] > s * AUDIO_BLOCK_ALIGN) {
                             short* samples = (short*)(srcBuffers[i] + s * AUDIO_BLOCK_ALIGN);
                             // Apply per-source volume (0-100)
@@ -606,13 +695,11 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
                             rightSum += (samples[1] * vol) / 100;
                             srcCount++;
                         }
+                        // Sources without data for this sample contribute silence (0) implicitly
                     }
                     
-                    // Only average if multiple sources (don't attenuate single source)
-                    if (srcCount > 1) {
-                        leftSum /= srcCount;
-                        rightSum /= srcCount;
-                    }
+                    // Don't divide by srcCount - just sum the sources that have data
+                    // This prevents volume drops when one source is silent
                     
                     // Track peaks
                     int absL = leftSum < 0 ? -leftSum : leftSum;
@@ -637,9 +724,13 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
                     // Convert to dB-ish scale (peak/32767 as percentage)
                     float peakPctL = (float)peakLeft / 32767.0f * 100.0f;
                     float peakPctR = (float)peakRight / 32767.0f * 100.0f;
-                    Logger_Log("Audio peak: L=%d (%.1f%%) R=%d (%.1f%%) sources=%d bytes=[%d,%d,%d]\n", 
-                               peakLeft, peakPctL, peakRight, peakPctR, ctx->sourceCount,
-                               srcBytes[0], srcBytes[1], srcBytes[2]);
+                    double rateElapsed = (double)(now.QuadPart - rateStartTime.QuadPart) / ctx->perfFreq.QuadPart;
+                    double actualRate = (rateElapsed > 0) ? (totalBytesOutput / rateElapsed) : 0;
+                    Logger_Log("Audio: L=%.1f%% R=%.1f%% bytes=[%d,%d,%d] dormant=[%d,%d,%d] rate=%.0f/s (target=%d)\n", 
+                               peakPctL, peakPctR,
+                               srcBytes[0], srcBytes[1], srcBytes[2],
+                               srcDormant[0], srcDormant[1], srcDormant[2],
+                               actualRate, AUDIO_BYTES_PER_SEC);
                     peakLeft = 0;
                     peakRight = 0;
                 }
@@ -648,9 +739,9 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
                 EnterCriticalSection(&ctx->mixLock);
                 
                 int spaceAvailable = ctx->mixBufferSize - ctx->mixBufferAvailable;
-                if (minBytes > spaceAvailable) {
+                if (bytesToMix > spaceAvailable) {
                     // Drop oldest
-                    int toDrop = minBytes - spaceAvailable;
+                    int toDrop = bytesToMix - spaceAvailable;
                     ctx->mixBufferAvailable -= toDrop;
                     ctx->mixBufferReadPos = (ctx->mixBufferReadPos + toDrop) % ctx->mixBufferSize;
                 }
@@ -658,17 +749,20 @@ static DWORD WINAPI MixCaptureThread(LPVOID param) {
                 int writePos = ctx->mixBufferWritePos;
                 int toEnd = ctx->mixBufferSize - writePos;
                 
-                if (minBytes <= toEnd) {
-                    memcpy(ctx->mixBuffer + writePos, mixChunk, minBytes);
+                if (bytesToMix <= toEnd) {
+                    memcpy(ctx->mixBuffer + writePos, mixChunk, bytesToMix);
                 } else {
                     memcpy(ctx->mixBuffer + writePos, mixChunk, toEnd);
-                    memcpy(ctx->mixBuffer, mixChunk + toEnd, minBytes - toEnd);
+                    memcpy(ctx->mixBuffer, mixChunk + toEnd, bytesToMix - toEnd);
                 }
                 
-                ctx->mixBufferWritePos = (writePos + minBytes) % ctx->mixBufferSize;
-                ctx->mixBufferAvailable += minBytes;
+                ctx->mixBufferWritePos = (writePos + bytesToMix) % ctx->mixBufferSize;
+                ctx->mixBufferAvailable += bytesToMix;
                 
                 LeaveCriticalSection(&ctx->mixLock);
+                
+                // Track total output for rate limiting
+                totalBytesOutput += bytesToMix;
                 
                 free(mixChunk);
             }
@@ -695,6 +789,11 @@ BOOL AudioCapture_Start(AudioCaptureContext* ctx) {
         }
         
         src->active = TRUE;
+        
+        // Initialize timing for event-driven source detection
+        QueryPerformanceFrequency(&src->perfFreq);
+        QueryPerformanceCounter(&src->lastPacketTime);
+        src->hasReceivedPacket = FALSE;
         
         // Start audio client
         HRESULT hr = src->audioClient->lpVtbl->Start(src->audioClient);
